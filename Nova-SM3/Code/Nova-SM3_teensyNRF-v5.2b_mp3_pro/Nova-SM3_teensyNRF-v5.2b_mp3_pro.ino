@@ -74,7 +74,7 @@ int  test_steps = 0;
 
 //debug vars for displaying operation runtime data for debugging
 const byte debug  = 1;            //general messages
-const byte debug1 = 0;            //remote commands and pir sensors
+const byte debug1 = 1;            //remote commands and pir sensors
 const byte debug2 = 0;            //debug servo steps
 const byte debug3 = 0;            //ramping and sequencing
 const byte debug4 = 0;            //amperage and battery 
@@ -1065,6 +1065,24 @@ bool nrf_check() {
       }
       Serial.println(" DATA REC");
     }
+    
+    // Detailed remote control debug: only print when something interesting arrives
+    if (debug1) {
+      bool has_action = (sel2 != 0 || p2 != 0 || ry != 127 || lx != 127 || ly != 127 || rx != 127 ||
+                         btn1 != 0 || btn2 != 0 || btn3 != 0 || btn4 != 0);
+      if (has_action) {
+        Serial.print(F("[NRF_RX] sel2=")); Serial.print(sel2);
+        Serial.print(F(" p2=")); Serial.print(p2);
+        Serial.print(F(" lx=")); Serial.print(lx);
+        Serial.print(F(" ly=")); Serial.print(ly);
+        Serial.print(F(" rx=")); Serial.print(rx);
+        Serial.print(F(" ry=")); Serial.print(ry);
+        if (btn1||btn2||btn3||btn4) {
+          Serial.print(F(" btn=")); Serial.print(btn1);Serial.print(btn2);Serial.print(btn3);Serial.print(btn4);
+        }
+        Serial.println();
+      }
+    }
     lastNRFUpdate = millis();
   }
 
@@ -1136,7 +1154,7 @@ void remote_check() {
       nrf_radio.enableAckPayload();
       nrf_radio.startListening();
       nrf_radio.writeAckPayload(1, &tm_data, sizeof(tm_data));
-      lastNRFUpdate = millis() - 1000; // Keep it in timeout state but try again in 1s
+      lastNRFUpdate = millis(); // Reset so we wait a full 2s before trying again
     }
     return;
   }

@@ -4,6 +4,7 @@ import serial.tools.list_ports
 import time
 import threading
 import math
+import queue
 from tkinter import filedialog, messagebox
 try:
     from PIL import Image
@@ -380,24 +381,30 @@ class NovaController:
 
         self.serial_port = None
         self.is_running = True
+
+        # =====================================================
+        # THREAD-SAFE KEY STATE
+        # All key state is protected by self._lock.
+        # The transmit thread reads snapshots under the lock.
+        # The Tkinter main thread writes under the lock.
+        # =====================================================
+        self._lock = threading.Lock()
+        self._held_keys = set()          # Currently physically held keys
+        self._key_press_time = {}        # key -> timestamp of last press event
+        self._key_release_time = {}      # key -> timestamp of last release event
         
-        # State variables
-        self.keys = {}
-        self.release_timers = {}
+        # One-shot command queue: items are dicts like {"sel2": 1} or {"p2": 12}
+        # The transmit loop drains this and sends each command for 3 consecutive packets
+        self._cmd_queue = queue.Queue()
+        
+        # Active one-shot commands being sent (list of {field: value, "remaining": N})
+        self._active_cmds = []
         
         # Sticks default to CENTER (127)
         self.lx = 127
         self.ly = 127
         self.rx = 127
         self.ry = 127
-        self.btn1 = 0
-        self.btn2 = 0
-        self.btn3 = 0
-        self.btn4 = 0
-        self.sel1 = 0
-        self.sel2 = 0
-        self.p1 = 0
-        self.p2 = 0  # special commands: 1=Home, 2=Toggle MPU
 
         # Robot status from ACK
         self.robot_mode = 0
@@ -408,11 +415,10 @@ class NovaController:
         self.radar_enabled = True
         self.swap_sensors = False
         
-        # Local mode tracking (works even without ACK)
+        # Local mode tracking
         self.local_mode = 0
         self.local_started = False
-        self.last_ack_time = 0  # timestamp of last ACK from robot
-        self.prev_sel2 = 0  # for rising-edge detection on sel2 toggle
+        self.last_ack_time = 0
 
         self.setup_ui()
         self.refresh_ports()
@@ -420,8 +426,6 @@ class NovaController:
         # Bind keyboard events
         master.bind('<KeyPress>', self.on_press)
         master.bind('<KeyRelease>', self.on_release)
-        # Use <Deactivate> instead of <FocusOut> — only fires when the
-        # whole window is deactivated (alt-tab), NOT on child widget clicks.
         master.bind('<Deactivate>', self.on_deactivate)
         
         self.last_sent_packet = ""
@@ -586,152 +590,160 @@ class NovaController:
             self.status_var.set(f"Status: Error - {e}")
             print(f"[SERIAL] ERROR: {e}")
 
+    # =================================================================
+    # KEY HANDLING — Thread-safe, no timers
+    # =================================================================
     def on_press(self, event):
         key = event.keysym.lower()
+        now = time.time()
+        with self._lock:
+            already_held = key in self._held_keys
+            self._held_keys.add(key)
+            self._key_press_time[key] = now
+            # Remove any pending release timestamp — the key is being held
+            self._key_release_time.pop(key, None)
         
-        # Cancel any pending release for this key (OS auto-repeat filter)
-        if key in self.release_timers:
-            self.master.after_cancel(self.release_timers[key])
-            del self.release_timers[key]
-            
-        if not self.keys.get(key, False):
-            self.keys[key] = True
-            self.update_state()
+        if not already_held:
+            # First press of this key — handle one-shot commands
+            self._handle_oneshot(key)
 
     def on_release(self, event):
         key = event.keysym.lower()
-        # Schedule the release to happen in 120ms. Windows auto-repeat
-        # fires release/press pairs every ~33ms. A 30ms timer was too
-        # short — it fired BEFORE the next synthetic press, causing
-        # the key state to flicker on/off every frame. 120ms gives
-        # plenty of margin while still feeling responsive.
-        timer_id = self.master.after(120, self._do_release, key)
-        self.release_timers[key] = timer_id
+        now = time.time()
+        with self._lock:
+            # Don't immediately remove from held_keys!
+            # Just record the release timestamp. The transmit thread
+            # will check if enough time has passed without a new press
+            # before actually releasing the key.
+            self._key_release_time[key] = now
 
-    def _do_release(self, key):
-        if key in self.release_timers:
-            del self.release_timers[key]
-        self.keys[key] = False
-        self.update_state()
-        
     def on_deactivate(self, event):
         """Clear all active keys when the window is deactivated (alt-tabbed away)."""
-        for t in self.release_timers.values():
-            self.master.after_cancel(t)
-        self.release_timers.clear()
-        self.keys.clear()
-        self.update_state()
+        with self._lock:
+            self._held_keys.clear()
+            self._key_press_time.clear()
+            self._key_release_time.clear()
         print("[FOCUS] Window deactivated - keys cleared, robot stopped.")
 
-    def update_state(self):
-        # =====================================================
-        # JOYSTICK MAPPING
-        # Inverted to match the physical orientation of the robot
-        # =====================================================
-        self.ry = 127
-        if self.keys.get('w'): self.ry = 215   # Forward
-        if self.keys.get('s'): self.ry = 40    # Backward
-
-        self.lx = 127
-        if self.keys.get('a'): self.lx = 215   # Left
-        if self.keys.get('d'): self.lx = 40    # Right
-
-        self.ly = 127
-        if self.keys.get('i'): self.ly = 40    # Up / pitch mod
-        if self.keys.get('k'): self.ly = 215   # Down / stride mod
-
-        self.rx = 127
-        if self.keys.get('j'): self.rx = 40    # Yaw left
-        if self.keys.get('l'): self.rx = 215   # Yaw right
-
-        # =====================================================
-        # BUTTONS & MODE SELECT
-        # =====================================================
-        self.sel1 = 0
-        self.sel2 = 0
-        self.btn1 = 0
-        self.btn2 = 0
-        self.btn3 = 0
-        self.btn4 = 0
-        self.p2 = 0
-
-        if self.keys.get('1'): self.p2 = 11
-        elif self.keys.get('2'): self.p2 = 12
-        elif self.keys.get('3'): self.p2 = 13
-        elif self.keys.get('4'): self.p2 = 14
-        elif self.keys.get('5'): self.p2 = 15
-
-        if self.keys.get('q'):
-            self.sel2 = 1
-
-        if self.keys.get('h'):
-            self.p2 = 1
-
-        if self.keys.get('m'):
-            self.p2 = 2
-
-        if self.keys.get('x'):
-            self.p2 = 3
-
-        if self.keys.get('c'):
-            self.p2 = 4
-
-        if self.keys.get('z'):
-            self.p2 = 5
-
-        # =====================================================
-        # LOCAL MODE DISPLAY (works without robot ACK)
-        # =====================================================
-        if self.p2 >= 11 and self.p2 <= 15:
-            self.local_mode = self.p2 - 10
-            self.local_started = False  # Selecting a mode resets started
-        # Rising-edge detection: only toggle on 0->1 transition
-        if self.sel2 and not self.prev_sel2:
+    def _handle_oneshot(self, key):
+        """Queue one-shot commands (mode select, start/stop, etc.)
+        These are NOT continuous — they fire once on key-down."""
+        if key == 'q':
+            self._cmd_queue.put({"sel2": 1})
+            # Toggle local started state for display
             self.local_started = not self.local_started
-        self.prev_sel2 = self.sel2
-        
-        # Update mode display locally
-        mode_name = MODE_NAMES.get(self.local_mode, f"#{self.local_mode}")
-        started = "ACTIVE" if self.local_started else "STOPPED"
-        
-        # Show robot connection status
-        if self.last_ack_time == 0:
-            robot_status = "⚠ ROBOT OFFLINE"
-        elif time.time() - self.last_ack_time > 5:
-            robot_status = "⚠ ROBOT OFFLINE"
-        else:
-            robot_status = "✓ ROBOT ONLINE"
-        
-        try:
-            self.mode_var.set(f"Mode: {mode_name} ({started})  |  {robot_status}")
-        except:
-            pass
+        elif key == 'h':
+            self._cmd_queue.put({"p2": 1})
+        elif key == 'm':
+            self._cmd_queue.put({"p2": 2})
+        elif key == 'x':
+            self._cmd_queue.put({"p2": 3})
+        elif key == 'c':
+            self._cmd_queue.put({"p2": 4})
+        elif key == 'z':
+            self._cmd_queue.put({"p2": 5})
+        elif key in ('1', '2', '3', '4', '5'):
+            mode_val = int(key) + 10  # 11-15
+            self._cmd_queue.put({"p2": mode_val})
+            self.local_mode = int(key)
+            self.local_started = False
 
+    # =================================================================
+    # TRANSMIT LOOP — Runs in background thread at 20Hz
+    # All state computation happens HERE, not on the main thread
+    # =================================================================
     def transmit_loop(self):
+        DEBOUNCE_SEC = 0.15  # 150ms debounce for key releases
+        
         while self.is_running:
-            # Format: <lx,ly,rx,ry,btn1,btn2,btn3,btn4,sel1,sel2,p1,p2>
-            packet = f"<{self.lx},{self.ly},{self.rx},{self.ry},{self.btn1},{self.btn2},{self.btn3},{self.btn4},{self.sel1},{self.sel2},{self.p1},{self.p2}>\n"
+            now = time.time()
+            
+            # --- Step 1: Process key release debouncing under lock ---
+            with self._lock:
+                # Check if any keys have been released for longer than DEBOUNCE_SEC
+                # without a subsequent press event
+                expired = []
+                for key, release_time in self._key_release_time.items():
+                    press_time = self._key_press_time.get(key, 0)
+                    # Only release if the release happened AFTER the last press
+                    # AND enough time has passed
+                    if release_time > press_time and (now - release_time) >= DEBOUNCE_SEC:
+                        expired.append(key)
                 
+                for key in expired:
+                    self._held_keys.discard(key)
+                    del self._key_release_time[key]
+                
+                # Take a snapshot of currently held keys
+                held = set(self._held_keys)
+            
+            # --- Step 2: Compute continuous joystick values from held keys ---
+            ry = 127
+            if 'w' in held: ry = 215   # Forward
+            if 's' in held: ry = 40    # Backward
+
+            lx = 127
+            if 'a' in held: lx = 215   # Left
+            if 'd' in held: lx = 40    # Right
+
+            ly = 127
+            if 'i' in held: ly = 40    # Up / pitch mod
+            if 'k' in held: ly = 215   # Down / stride mod
+
+            rx = 127
+            if 'j' in held: rx = 40    # Yaw left
+            if 'l' in held: rx = 215   # Yaw right
+
+            # --- Step 3: Drain one-shot command queue ---
+            while True:
+                try:
+                    cmd = self._cmd_queue.get_nowait()
+                    # Send each one-shot command for 3 consecutive packets (150ms)
+                    cmd["remaining"] = 3
+                    self._active_cmds.append(cmd)
+                except queue.Empty:
+                    break
+            
+            # --- Step 4: Build packet values ---
+            btn1 = btn2 = btn3 = btn4 = 0
+            sel1 = sel2 = 0
+            p1 = p2 = 0
+            
+            # Apply active one-shot commands
+            still_active = []
+            for cmd in self._active_cmds:
+                if "sel2" in cmd:
+                    sel2 = cmd["sel2"]
+                if "p2" in cmd:
+                    p2 = cmd["p2"]
+                cmd["remaining"] -= 1
+                if cmd["remaining"] > 0:
+                    still_active.append(cmd)
+            self._active_cmds = still_active
+            
+            # --- Step 5: Format and send packet ---
+            # Format: <lx,ly,rx,ry,btn1,btn2,btn3,btn4,sel1,sel2,p1,p2>
+            packet = f"<{lx},{ly},{rx},{ry},{btn1},{btn2},{btn3},{btn4},{sel1},{sel2},{p1},{p2}>\n"
+            
             # Print detailed log only when state actually changes
             if packet != self.last_sent_packet:
-                # Build human-readable description of what changed
                 parts = []
-                if self.ry != 127: parts.append(f"ry={self.ry}({'FWD' if self.ry < 127 else 'BACK'})")
-                if self.lx != 127: parts.append(f"lx={self.lx}({'LEFT' if self.lx < 127 else 'RIGHT'})")
-                if self.ly != 127: parts.append(f"ly={self.ly}")
-                if self.rx != 127: parts.append(f"rx={self.rx}")
-                if self.btn1: parts.append("BTN1")
-                if self.btn2: parts.append("BTN2")
-                if self.btn3: parts.append("BTN3")
-                if self.btn4: parts.append("BTN4")
-                if self.sel1: parts.append("SEL1")
-                if self.sel2: parts.append("START/STOP(sel2)")
-                if self.p2 >= 11: parts.append(f"MODE={MODE_NAMES.get(self.p2-10, '?')}(p2={self.p2})")
-                elif self.p2 == 1: parts.append("HOME(p2=1)")
-                elif self.p2 == 2: parts.append("MPU_TOGGLE(p2=2)")
-                elif self.p2 == 3: parts.append("SIT(p2=3)")
-                elif self.p2 == 4: parts.append("LAY_DOWN(p2=4)")
-                elif self.p2 == 5: parts.append("CUSTOM_IMG(p2=5)")
+                if ry != 127: parts.append(f"ry={ry}({'FWD' if ry > 127 else 'BACK'})")
+                if lx != 127: parts.append(f"lx={lx}({'LEFT' if lx > 127 else 'RIGHT'})")
+                if ly != 127: parts.append(f"ly={ly}")
+                if rx != 127: parts.append(f"rx={rx}")
+                if btn1: parts.append("BTN1")
+                if btn2: parts.append("BTN2")
+                if btn3: parts.append("BTN3")
+                if btn4: parts.append("BTN4")
+                if sel1: parts.append("SEL1")
+                if sel2: parts.append("START/STOP(sel2)")
+                if p2 >= 11: parts.append(f"MODE={MODE_NAMES.get(p2-10, '?')}(p2={p2})")
+                elif p2 == 1: parts.append("HOME(p2=1)")
+                elif p2 == 2: parts.append("MPU_TOGGLE(p2=2)")
+                elif p2 == 3: parts.append("SIT(p2=3)")
+                elif p2 == 4: parts.append("LAY_DOWN(p2=4)")
+                elif p2 == 5: parts.append("CUSTOM_IMG(p2=5)")
                 desc = ", ".join(parts) if parts else "IDLE (all centered)"
                 print(f"[TX] {desc}  ->  {packet.strip()}")
                 self.last_sent_packet = packet
@@ -739,6 +751,20 @@ class NovaController:
             # Update UI safely from this thread
             try:
                 self.data_var.set(f"Tx: {packet.strip()}")
+            except:
+                pass
+            
+            # Update mode display
+            try:
+                mode_name = MODE_NAMES.get(self.local_mode, f"#{self.local_mode}")
+                started = "ACTIVE" if self.local_started else "STOPPED"
+                if self.last_ack_time == 0:
+                    robot_status = "⚠ ROBOT OFFLINE"
+                elif time.time() - self.last_ack_time > 5:
+                    robot_status = "⚠ ROBOT OFFLINE"
+                else:
+                    robot_status = "✓ ROBOT ONLINE"
+                self.mode_var.set(f"Mode: {mode_name} ({started})  |  {robot_status}")
             except:
                 pass
                     
@@ -781,16 +807,12 @@ class NovaController:
                                     new_uss_r = int(parts[4])
 
                                 # --- Reject corrupted ACK packets ---
-                                # Pattern 1: All 5 bytes identical (e.g. [100,100,100,100,100])
-                                # Pattern 2: Mode not a valid value (must be 0-5)
-                                # Pattern 3: start_mode not valid (must be 0-5)
                                 ack_vals = [new_mode, new_start, new_mpu, new_uss_l, new_uss_r]
                                 all_same = len(set(ack_vals)) == 1 and ack_vals[0] != 0
                                 invalid_mode = new_mode > 5
                                 invalid_start = new_start > 5
                                 
                                 if all_same or invalid_mode or invalid_start:
-                                    # Corrupted ACK — skip entirely
                                     continue
 
                                 # Log when state or USS data changes significantly
@@ -822,6 +844,11 @@ class NovaController:
                                 self.uss_right = new_uss_r
                                 self.last_ack_time = time.time()
 
+                                # Sync local mode from robot ACK for accurate display
+                                if new_mode > 0 and new_mode <= 5:
+                                    self.local_mode = new_mode
+                                self.local_started = (new_start > 0)
+
                                 # Update GUI safely from background thread
                                 mode_name = MODE_NAMES.get(self.robot_mode, f"#{self.robot_mode}")
                                 started = "ACTIVE" if self.robot_start_mode > 0 else "STOPPED"
@@ -851,3 +878,4 @@ if __name__ == "__main__":
     app = NovaController(root)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()
+
