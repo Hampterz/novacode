@@ -1,0 +1,3 @@
+@echo off
+echo Starting Nova SM3 Python Controller...
+python nova_controller.py
