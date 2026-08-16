@@ -1008,8 +1008,16 @@ bool nrf_check() {
   bool resp = false;
   uint8_t pipe;
 
-  if (nrf_radio.available(&pipe)) {
+  if (nrf_radio.available()) {
     uint8_t bytes = nrf_radio.getPayloadSize();
+    if (bytes > sizeof(rc_data)) {
+      // Packet is too large, it's corrupted or invalid.
+      // We must read it to clear it from the NRF buffer, but we shouldn't overflow rc_data.
+      uint8_t dummy[32];
+      nrf_radio.read(&dummy, bytes);
+      return false; // discard
+    }
+    
     nrf_radio.read(&rc_data, bytes);
     resp = true;
 
@@ -1116,7 +1124,20 @@ void remote_check() {
       start_mode = 0;
       y_dir = 0; x_dir = 0; z_dir = 0;
     }
-    lastNRFUpdate = millis(); // prevent spamming the stop logic
+    
+    // Auto-recover NRF24L01 if offline for more than 2 seconds (e.g. brownout freeze)
+    if (millis() - lastNRFUpdate > 2000) {
+      if (debug) Serial.println(F("NRF OFFLINE: Attempting hardware re-init..."));
+      nrf_radio.begin();
+      nrf_radio.setPALevel(RF24_PA_LOW);
+      nrf_radio.setPayloadSize(sizeof(rc_data));
+      nrf_radio.setChannel(124);
+      nrf_radio.openReadingPipe(1, address[!radioNumber]);
+      nrf_radio.enableAckPayload();
+      nrf_radio.startListening();
+      nrf_radio.writeAckPayload(1, &tm_data, sizeof(tm_data));
+      lastNRFUpdate = millis() - 1000; // Keep it in timeout state but try again in 1s
+    }
     return;
   }
 
