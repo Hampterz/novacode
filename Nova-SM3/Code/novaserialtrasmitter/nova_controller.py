@@ -626,17 +626,15 @@ class NovaController:
     def update_state(self):
         # =====================================================
         # JOYSTICK MAPPING
-        # Teensy uses: y_dir = map(ry, 0, 255, 35, -35)
-        #   ry < 127 -> positive y_dir -> move_forward (physical forward)
-        #   ry > 127 -> negative y_dir -> move_backward (physical backward)
+        # Inverted to match the physical orientation of the robot
         # =====================================================
         self.ry = 127
-        if self.keys.get('w'): self.ry = 40    # Forward (low ry -> positive y_dir -> move_forward)
-        if self.keys.get('s'): self.ry = 215   # Backward (high ry -> negative y_dir -> move_backward)
+        if self.keys.get('w'): self.ry = 215   # Forward
+        if self.keys.get('s'): self.ry = 40    # Backward
 
         self.lx = 127
-        if self.keys.get('a'): self.lx = 40    # Left
-        if self.keys.get('d'): self.lx = 215   # Right
+        if self.keys.get('a'): self.lx = 215   # Left
+        if self.keys.get('d'): self.lx = 40    # Right
 
         self.ly = 127
         if self.keys.get('i'): self.ly = 40    # Up / pitch mod

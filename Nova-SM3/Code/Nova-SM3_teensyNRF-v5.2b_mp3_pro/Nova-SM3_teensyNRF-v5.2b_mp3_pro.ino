@@ -471,6 +471,7 @@ void setup() {
 
   //setup 2nd i2c bus
   Wire1.begin();
+  Wire1.setTimeout(10); // Prevent I2C from hanging forever if slave disconnects
   Wire1.setSDA(SDA2_PIN);
   Wire1.setSCL(SCL2_PIN);
 
@@ -772,6 +773,7 @@ void setup() {
   //init mpu6050 - MUST be done after servos are enabled so robot is standing level!
   // Initialize regardless of mpu_active so it can be toggled remotely later
   Wire1.begin();
+  Wire1.setTimeout(10); // Prevent I2C from hanging forever if slave disconnects
     uint8_t c = readByte(MPU6050_ADDRESS, WHO_AM_I_MPU6050);  // Read WHO_AM_I register for MPU-6050
     delay(1000); 
   
