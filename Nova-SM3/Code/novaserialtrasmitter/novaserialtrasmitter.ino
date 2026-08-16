@@ -111,6 +111,13 @@ void loop() {
 }
 
 void parse_command(String cmd) {
+  // Validate packet integrity by counting commas
+  int commaCount = 0;
+  for (int i=0; i<cmd.length(); i++) {
+    if (cmd.charAt(i) == ',') commaCount++;
+  }
+  if (commaCount != 11) return; // Drop corrupted packets
+
   int commaIndex;
   for (int i = 0; i < 12; i++) {
     commaIndex = cmd.indexOf(',');
@@ -126,12 +133,12 @@ void parse_command(String cmd) {
     else if (i == 1) tm_data[11] = val; // ly
     else if (i == 2) tm_data[12] = val; // rx
     else if (i == 3) tm_data[13] = val; // ry
-    else if (i == 4) tm_data[4] = val;  // btn1
-    else if (i == 5) tm_data[5] = val;  // btn2
-    else if (i == 6) tm_data[0] = val;  // btn3
-    else if (i == 7) tm_data[1] = val;  // btn4
-    else if (i == 8) tm_data[2] = val;  // sel1
-    else if (i == 9) tm_data[3] = val;  // sel2
+    else if (i == 4) tm_data[0] = val;  // btn1
+    else if (i == 5) tm_data[1] = val;  // btn2
+    else if (i == 6) tm_data[2] = val;  // btn3
+    else if (i == 7) tm_data[3] = val;  // btn4
+    else if (i == 8) tm_data[4] = val;  // sel1
+    else if (i == 9) tm_data[5] = val;  // sel2
     else if (i == 10) tm_data[6] = val; // p1 (mode)
     else if (i == 11) tm_data[7] = val; // p2 (special cmd)
   }
