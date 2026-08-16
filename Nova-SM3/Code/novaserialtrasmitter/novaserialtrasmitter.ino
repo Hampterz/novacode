@@ -54,6 +54,12 @@ uint8_t tm_data[data_num] = {
 
 uint8_t rc_data[data_num] = {0};
 
+// Function prototypes
+void print_help();
+void send_data();
+void parse_command(char* cmd);
+void handle_command_legacy(char* cmd);
+
 void setup() {
   Serial.begin(19200);
   while (!Serial) {}
@@ -164,7 +170,7 @@ void parse_command(char* cmd) {
   tm_data[9] = 0;
 }
 
-void handle_command_legacy(String cmd) {
+void handle_command_legacy(char* cmd) {
   // reset sticks to CENTER and buttons to 0
   tm_data[10] = 127; tm_data[11] = 127;
   tm_data[12] = 127; tm_data[13] = 127;
@@ -173,7 +179,6 @@ void handle_command_legacy(String cmd) {
   tm_data[4] = 0; tm_data[5] = 0;
   tm_data[7] = 0;
 
-  if (cmd == "1") {
   if (strcmp(cmd, "1") == 0) {
     tm_data[7] = 11; // p2=11 -> march
     Serial.println("-> Mode: MARCH");
