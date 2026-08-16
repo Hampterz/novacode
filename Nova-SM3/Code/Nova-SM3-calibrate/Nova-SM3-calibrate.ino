@@ -1,171 +1,114 @@
 //use copy of software calibration file for home & limits
 #include "NovaServos.h"
-
-//set which servos to home / activate for calibration
-byte calibServo[TOTAL_SERVOS] = {
-  1, 1, 1,                          //RFx
-  1, 1, 1,                          //LFx
-  1, 1, 1,                          //RRx
-  1, 1, 1,                          //LRx
-};
-
-//run calibration test(s)
-//NOTE: be aware / cautious of potential leg-to-leg collisions 
-//      when running multiple tests with multiple servos/legs
-//
-int spd = 5;                        //speed of servo movements (higher=slower)
-int calib_loops = 2;                //how many times to run test(s)
-byte test_sweep = 1;                //sweep active servo(s) from home-to-max-to-min-to-home
-byte test_min = 0;                  //move active servo(s) to min position
-byte test_max = 0;                  //move active servo(s) to max position
-byte test_home = 1;                 //move active servo(s) to home position
-
-
 #include <Adafruit_PWMServoDriver.h>
-Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver();
 
-byte use_limit = 0;  //0=min, 1=max
+Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver();
 
 void setup() {
   Serial.begin(19200);
-  Serial.println("Servo Calibration");
+  Serial.println("Servo Calibration - Interactive Mode");
 
   pwm1.begin();
   pwm1.setOscillatorFrequency(25000000);
   pwm1.setPWMFreq(60);
-  Serial.println("PWM Passed Setup... initializing servos...");
-
+  
+  // Start with all servos OFF
   for (int i = 0; i < TOTAL_SERVOS; i++) {
-    servoSpeed[i] = spd;
     servoPos[i] = servoHome[i];
-    if (calibServo[i]) {
-      Serial.print("servo #");Serial.print(i);Serial.print("... ");
-      pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
-      delay(500);
-      Serial.println("\tOK");
-    }
+    pwm1.setPWM(servoSetup[i][1], 0, 0); 
   }
-  Serial.println("----------------------------\nbegin calibration routine...");
-  delay(3000);
+
+  Serial.println("-------------------------------------------------");
+  Serial.println("Type 'leg1' for Right Front (Servos 0, 1, 2)");
+  Serial.println("Type 'leg2' for Left Front (Servos 3, 4, 5)");
+  Serial.println("Type 'leg3' for Right Rear (Servos 6, 7, 8)");
+  Serial.println("Type 'leg4' for Left Rear (Servos 9, 10, 11)");
+  Serial.println("-------------------------------------------------");
 }
 
 void loop() {
-  int l = 1;
-  while (calib_loops) {
-    Serial.print("calibration loop ");Serial.println(l);
-    if (test_sweep) {
-      sweep_active();
-      l++;
-      delay(3000);
-    }
+  static int activeLegBase = 0;
   
-    if (test_min) {
-      use_limit = 0;
-      set_limit();
-      delay(3000);
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    if (input.length() > 0) {
+      if (input == "leg1" || input == "leg2" || input == "leg3" || input == "leg4") {
+        if (input == "leg1") activeLegBase = 0;
+        if (input == "leg2") activeLegBase = 3;
+        if (input == "leg3") activeLegBase = 6;
+        if (input == "leg4") activeLegBase = 9;
+        
+        Serial.print("\nActivating ");
+        Serial.println(input);
+        
+        // Turn off all servos first
+        for (int i = 0; i < TOTAL_SERVOS; i++) {
+          pwm1.setPWM(servoSetup[i][1], 0, 0);
+        }
+        
+        // Turn on the 3 servos for the selected leg to their current servoPos
+        for (int i = activeLegBase; i < activeLegBase + 3; i++) {
+          pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
+          Serial.print("Joint "); Serial.print(i - activeLegBase); Serial.print(" snapped to "); Serial.println(servoPos[i]);
+        }
+        Serial.println("Type '<joint> <pwm>' (e.g. '0 350' for Hip, '1 350' for Femur, '2 350' for Knee) to adjust.");
+        Serial.println("Type '<joint> min' or '<joint> max' to test physical limits.");
+        Serial.println("Type '<joint> home' to return to home.");
+        
+      } else if (input == "done") {
+        Serial.println("\n--- FINAL CALIBRATION VALUES ---");
+        for (int i = 0; i < TOTAL_SERVOS; i++) {
+            Serial.print("Servo ");
+            Serial.print(i);
+            Serial.print(":\t");
+            Serial.println(servoPos[i]);
+        }
+        Serial.println("--------------------------------\n");
+      } else {
+        int spaceIdx = input.indexOf(' ');
+        if (spaceIdx > 0) {
+          int localJoint = input.substring(0, spaceIdx).toInt();
+          String valStr = input.substring(spaceIdx + 1);
+          
+          if (localJoint >= 0 && localJoint <= 2) {
+            int servoNum = activeLegBase + localJoint;
+            int targetPWM = -1;
+            
+            if (valStr == "min") {
+              targetPWM = servoLimit[servoNum][0];
+            } else if (valStr == "max") {
+              targetPWM = servoLimit[servoNum][1];
+            } else if (valStr == "home") {
+              targetPWM = servoHome[servoNum];
+            } else {
+              targetPWM = valStr.toInt();
+            }
+            
+            if (targetPWM > 0) {
+              Serial.print("Moving Joint ");
+              Serial.print(localJoint);
+              Serial.print(" (Global Servo ");
+              Serial.print(servoNum);
+              Serial.print(") to ");
+              Serial.print(targetPWM);
+              if (valStr == "min") Serial.println(" (MIN limit)");
+              else if (valStr == "max") Serial.println(" (MAX limit)");
+              else if (valStr == "home") Serial.println(" (HOME position)");
+              else Serial.println("");
+              
+              servoPos[servoNum] = targetPWM;  // Save the new value
+              pwm1.setPWM(servoSetup[servoNum][1], 0, targetPWM);
+            } else {
+              Serial.println("Invalid PWM value");
+            }
+          } else {
+            Serial.println("Invalid joint number (must be 0, 1, or 2)");
+          }
+        } else {
+          Serial.println("Unknown Command.");
+        }
+      }
     }
-  
-    if (test_max) {
-      use_limit = 1;
-      set_limit();
-      delay(3000);
-    }
-  
-    if (test_home) {
-      set_home();
-      delay(3000);
-    }
-
-    l++;
-    calib_loops--;
-    Serial.println("");
   }
-}
-
-void sweep_active() {
-    for (int i = 0; i < TOTAL_SERVOS; i++) {
-      if (calibServo[i]) {
-        int smin = servoLimit[i][0];
-        int smax = servoLimit[i][1];
-        if (servoLimit[i][0] > servoLimit[i][1]) {
-          smin = servoLimit[i][1];
-          smax = servoLimit[i][0];
-        }
-        Serial.print("servo # ");Serial.print(i);
-        Serial.print(" to max "); Serial.print(smax);
-        for (int x=servoHome[i];x<smax; x++) {
-          servoPos[i] = x;
-          pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
-          delay(spd);
-        }
-        Serial.print(" to min "); Serial.print(smin);
-        for (int x=smax;x>smin; x--) {
-          servoPos[i] = x;
-          pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
-          delay(spd);
-        }
-        Serial.print(" to home "); Serial.println(servoHome[i]);
-        for (int x=smin;x<servoHome[i]; x++) {
-          servoPos[i] = x;
-          pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
-          delay(spd);
-        }
-        delay((spd*10));
-      }
-    }
-}
-
-void set_limit() {
-    for (int i = 0; i < TOTAL_SERVOS; i++) {
-      if (calibServo[i]) {
-        Serial.print("servo # ");Serial.print(i);
-        int spos = servoLimit[i][0];
-        if (use_limit) {
-          spos = servoLimit[i][1];
-          Serial.print(" to max ");
-        } else {
-          Serial.print(" to min ");
-        }
-        Serial.println(spos);
-        if (servoPos[i] > spos) {
-          for (int x=servoPos[i];x>spos; x--) {
-            servoPos[i] = x;
-            pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
-            delay(spd);
-          }
-        } else {
-          for (int x=servoPos[i];x<spos; x++) {
-            servoPos[i] = x;
-            pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
-            delay(spd);
-          }
-        }
-        delay((spd*10));
-      }
-    }
-}
-
-void set_home() {
-    for (int i = 0; i < TOTAL_SERVOS; i++) {
-      if (calibServo[i]) {
-        Serial.print("servo # ");Serial.print(i);
-        int spos = servoHome[i];
-        Serial.print(" to home ");
-        Serial.println(spos);
-        if (servoPos[i] > spos) {
-          for (int x=servoPos[i];x>spos; x--) {
-            servoPos[i] = x;
-            pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
-            delay(spd);
-          }
-        } else {
-          for (int x=servoPos[i];x<spos; x++) {
-            servoPos[i] = x;
-            pwm1.setPWM(servoSetup[i][1], 0, servoPos[i]);
-            delay(spd);
-          }
-        }
-        delay((spd*10));
-      }
-    }
 }
