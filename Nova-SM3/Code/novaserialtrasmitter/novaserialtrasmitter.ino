@@ -88,8 +88,9 @@ void loop() {
       parse_command(cmd);
       send_data();
       last_serial_time = millis();
-    } else {
-      // Fallback for manual typing in serial monitor
+    } else if (cmd.length() > 0 && cmd.length() <= 4 && cmd.indexOf(',') == -1) {
+      // Only accept short, non-packet strings as manual commands.
+      // Fragments from corrupted binary packets are silently dropped.
       cmd.toLowerCase();
       handle_command_legacy(cmd);
       send_data();

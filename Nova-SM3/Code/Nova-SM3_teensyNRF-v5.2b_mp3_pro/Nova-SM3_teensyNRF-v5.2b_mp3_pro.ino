@@ -1055,8 +1055,8 @@ bool nrf_check() {
       }
       Serial.println(" DATA REC");
     }
+    lastNRFUpdate = millis();
   }
-  lastNRFUpdate = millis();
 
   return resp;
 }
@@ -1096,6 +1096,27 @@ void nrf_ack() {
    -------------------------------------------------------
 */
 void remote_check() {
+
+  // NRF disconnect failsafe: if no radio data for 1 second, stop everything
+  if (lastNRFUpdate > 0 && (millis() - lastNRFUpdate > 1000)) {
+    if (start_mode != 0 || move_march || move_trot || move_follow) {
+      if (debug) Serial.println(F("NRF TIMEOUT: Controller disconnected, stopping robot"));
+      set_stop_active();
+      set_stop();
+      move_march = 0;
+      move_forward = 0;
+      move_backward = 0;
+      move_left = 0;
+      move_right = 0;
+      move_trot = 0;
+      move_follow = 0;
+      remote_start_stop = 0;
+      start_mode = 0;
+      y_dir = 0; x_dir = 0; z_dir = 0;
+    }
+    lastNRFUpdate = millis(); // prevent spamming the stop logic
+    return;
+  }
 
   if (nrf_check()) {
 
@@ -2160,12 +2181,13 @@ void uss_check() {
     distance_l = prev_distance_l = dist_lt;
   }
 
-  // FORCE PRINT RAW DATA SO WE KNOW EXACTLY WHAT'S HAPPENING
-  Serial.print(F("USS RAW -> Left: "));
-  Serial.print(dist_lt);
-  Serial.print(F(" cm | Right: "));
-  Serial.print(dist_rt);
-  Serial.println(F(" cm"));
+  if (debug7) {
+    Serial.print(F("USS -> L: "));
+    Serial.print(dist_lt);
+    Serial.print(F(" cm | R: "));
+    Serial.print(dist_rt);
+    Serial.println(F(" cm"));
+  }
 
   if (oled_active) {
     oled_request((char*)"c");

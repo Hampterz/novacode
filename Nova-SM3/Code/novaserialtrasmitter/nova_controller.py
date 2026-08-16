@@ -412,6 +412,7 @@ class NovaController:
         self.local_mode = 0
         self.local_started = False
         self.last_ack_time = 0  # timestamp of last ACK from robot
+        self.prev_sel2 = 0  # for rising-edge detection on sel2 toggle
 
         self.setup_ui()
         self.refresh_ports()
@@ -625,26 +626,25 @@ class NovaController:
     def update_state(self):
         # =====================================================
         # JOYSTICK MAPPING
-        # NOTE: The robot's step_forward() physically walks BACKWARD,
-        # and step_backward() physically walks FORWARD. So the
-        # Teensy code names are inverted from the user's perspective.
-        # We map keys to match PHYSICAL direction, not code names.
+        # Teensy uses: y_dir = map(ry, 0, 255, 35, -35)
+        #   ry < 127 -> positive y_dir -> move_forward (physical forward)
+        #   ry > 127 -> negative y_dir -> move_backward (physical backward)
         # =====================================================
         self.ry = 127
-        if self.keys.get('w'): self.ry = 215   # Physical forward (Teensy: move_backward)
-        if self.keys.get('s'): self.ry = 40    # Physical backward (Teensy: move_forward)
+        if self.keys.get('w'): self.ry = 40    # Forward (low ry -> positive y_dir -> move_forward)
+        if self.keys.get('s'): self.ry = 215   # Backward (high ry -> negative y_dir -> move_backward)
 
         self.lx = 127
-        if self.keys.get('a'): self.lx = 215   # Left 
-        if self.keys.get('d'): self.lx = 40    # Right 
+        if self.keys.get('a'): self.lx = 40    # Left
+        if self.keys.get('d'): self.lx = 215   # Right
 
         self.ly = 127
-        if self.keys.get('i'): self.ly = 215   # Up / pitch mod
-        if self.keys.get('k'): self.ly = 40    # Down / stride mod
+        if self.keys.get('i'): self.ly = 40    # Up / pitch mod
+        if self.keys.get('k'): self.ly = 215   # Down / stride mod
 
         self.rx = 127
-        if self.keys.get('j'): self.rx = 215   # Yaw left
-        if self.keys.get('l'): self.rx = 40    # Yaw right
+        if self.keys.get('j'): self.rx = 40    # Yaw left
+        if self.keys.get('l'): self.rx = 215   # Yaw right
 
         # =====================================================
         # BUTTONS & MODE SELECT
@@ -687,8 +687,10 @@ class NovaController:
         if self.p2 >= 11 and self.p2 <= 15:
             self.local_mode = self.p2 - 10
             self.local_started = False  # Selecting a mode resets started
-        if self.sel2:
+        # Rising-edge detection: only toggle on 0->1 transition
+        if self.sel2 and not self.prev_sel2:
             self.local_started = not self.local_started
+        self.prev_sel2 = self.sel2
         
         # Update mode display locally
         mode_name = MODE_NAMES.get(self.local_mode, f"#{self.local_mode}")
@@ -716,17 +718,22 @@ class NovaController:
             if packet != self.last_sent_packet:
                 # Build human-readable description of what changed
                 parts = []
-                if self.ry != 127: parts.append(f"ry={self.ry}({'FWD' if self.ry > 127 else 'BACK'})")
+                if self.ry != 127: parts.append(f"ry={self.ry}({'FWD' if self.ry < 127 else 'BACK'})")
                 if self.lx != 127: parts.append(f"lx={self.lx}({'LEFT' if self.lx < 127 else 'RIGHT'})")
                 if self.ly != 127: parts.append(f"ly={self.ly}")
                 if self.rx != 127: parts.append(f"rx={self.rx}")
-                if self.sel2: parts.append("START/STOP")
-                if self.p2 >= 11: parts.append(f"MODE={MODE_NAMES.get(self.p2-10, '?')}")
-                elif self.p2 == 1: parts.append("HOME")
-                elif self.p2 == 2: parts.append("MPU_TOGGLE")
-                elif self.p2 == 3: parts.append("SIT")
-                elif self.p2 == 4: parts.append("LAY_DOWN")
-                elif self.p2 == 5: parts.append("CUSTOM_IMG")
+                if self.btn1: parts.append("BTN1")
+                if self.btn2: parts.append("BTN2")
+                if self.btn3: parts.append("BTN3")
+                if self.btn4: parts.append("BTN4")
+                if self.sel1: parts.append("SEL1")
+                if self.sel2: parts.append("START/STOP(sel2)")
+                if self.p2 >= 11: parts.append(f"MODE={MODE_NAMES.get(self.p2-10, '?')}(p2={self.p2})")
+                elif self.p2 == 1: parts.append("HOME(p2=1)")
+                elif self.p2 == 2: parts.append("MPU_TOGGLE(p2=2)")
+                elif self.p2 == 3: parts.append("SIT(p2=3)")
+                elif self.p2 == 4: parts.append("LAY_DOWN(p2=4)")
+                elif self.p2 == 5: parts.append("CUSTOM_IMG(p2=5)")
                 desc = ", ".join(parts) if parts else "IDLE (all centered)"
                 print(f"[TX] {desc}  ->  {packet.strip()}")
                 self.last_sent_packet = packet
