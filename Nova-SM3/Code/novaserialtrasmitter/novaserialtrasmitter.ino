@@ -49,7 +49,7 @@ uint8_t tm_data[data_num] = {
   0, 0, 0, 0,   // btn1, btn2, btn3, btn4
   0, 0,         // sel1, sel2
   0, 0, 0, 0,   // p1, p2, p3, p4
-  0, 0, 0, 0    // lx, ly, rx, ry
+  127, 127, 127, 127  // lx, ly, rx, ry (CENTERED by default)
 };
 
 uint8_t rc_data[data_num] = {0};
@@ -79,22 +79,40 @@ void setup() {
 
 unsigned long last_serial_time = 0;
 
+char serial_buf[64];
+int buf_idx = 0;
+
 void loop() {
-  if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-    if (cmd.startsWith("<") && cmd.endsWith(">")) {
-      cmd = cmd.substring(1, cmd.length() - 1);
-      parse_command(cmd);
-      send_data();
-      last_serial_time = millis();
-    } else if (cmd.length() > 0 && cmd.length() <= 4 && cmd.indexOf(',') == -1) {
-      // Only accept short, non-packet strings as manual commands.
-      // Fragments from corrupted binary packets are silently dropped.
-      cmd.toLowerCase();
-      handle_command_legacy(cmd);
-      send_data();
-      last_serial_time = millis();
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (buf_idx > 0) {
+        serial_buf[buf_idx] = '\0'; // Null-terminate
+        
+        // Check if it's a binary packet format <...>
+        if (serial_buf[0] == '<' && serial_buf[buf_idx - 1] == '>') {
+          serial_buf[buf_idx - 1] = '\0'; // Remove trailing >
+          parse_command(&serial_buf[1]);  // Skip leading <
+          send_data();
+          last_serial_time = millis();
+        } 
+        // Only accept short, non-packet strings as manual commands.
+        // Fragments from corrupted binary packets are silently dropped.
+        else if (buf_idx > 0 && buf_idx <= 4 && strchr(serial_buf, ',') == NULL) {
+          // Convert to lowercase
+          for(int i=0; i<buf_idx; i++){
+            serial_buf[i] = tolower(serial_buf[i]);
+          }
+          handle_command_legacy(serial_buf);
+          send_data();
+          last_serial_time = millis();
+        }
+        buf_idx = 0; // Reset buffer for next line
+      }
+    } else {
+      if (buf_idx < 63) {
+        serial_buf[buf_idx++] = c;
+      }
     }
   }
 
@@ -111,24 +129,18 @@ void loop() {
   }
 }
 
-void parse_command(String cmd) {
+void parse_command(char* cmd) {
   // Validate packet integrity by counting commas
   int commaCount = 0;
-  for (int i=0; i<cmd.length(); i++) {
-    if (cmd.charAt(i) == ',') commaCount++;
+  for (int i=0; cmd[i] != '\0'; i++) {
+    if (cmd[i] == ',') commaCount++;
   }
   if (commaCount != 11) return; // Drop corrupted packets
 
-  int commaIndex;
-  for (int i = 0; i < 12; i++) {
-    commaIndex = cmd.indexOf(',');
-    int val = 0;
-    if (commaIndex != -1) {
-      val = cmd.substring(0, commaIndex).toInt();
-      cmd = cmd.substring(commaIndex + 1);
-    } else {
-      val = cmd.toInt();
-    }
+  char* ptr = strtok(cmd, ",");
+  int i = 0;
+  while (ptr != NULL && i < 12) {
+    int val = atoi(ptr);
     
     if (i == 0) tm_data[10] = val;      // lx
     else if (i == 1) tm_data[11] = val; // ly
@@ -142,6 +154,9 @@ void parse_command(String cmd) {
     else if (i == 9) tm_data[5] = val;  // sel2
     else if (i == 10) tm_data[6] = val; // p1 (mode)
     else if (i == 11) tm_data[7] = val; // p2 (special cmd)
+    
+    ptr = strtok(NULL, ",");
+    i++;
   }
   
   // Clear unused slide pot values so random image pixels don't cause the robot to jitter
@@ -159,70 +174,54 @@ void handle_command_legacy(String cmd) {
   tm_data[7] = 0;
 
   if (cmd == "1") {
-    tm_data[4] = 1; // sel1 = mode select
-    tm_data[6] = 0; // p1 = mode 0 (march)
-    Serial.println("-> March mode");
-  } else if (cmd == "2") {
-    tm_data[4] = 1;
-    tm_data[6] = 64;
-    Serial.println("-> Walk mode");
-  } else if (cmd == "3") {
-    tm_data[4] = 1;
-    tm_data[6] = 128;
-    Serial.println("-> Freestyle mode");
-  } else if (cmd == "4") {
-    tm_data[4] = 1;
-    tm_data[6] = 192;
-    Serial.println("-> Trot mode");
-  } else if (cmd == "5") {
-    tm_data[4] = 1;
-    tm_data[6] = 255;
-    Serial.println("-> Follow mode");
-  } else if (cmd == "s") {
-    tm_data[5] = 1; // sel2 = stop
-    Serial.println("-> Stop");
-  } else if (cmd == "r") {
-    tm_data[4] = 1; // sel1 = start
-    Serial.println("-> Start");
-  } else if (cmd == "b1") {
-    tm_data[0] = 1;
-    Serial.println("-> Button 1 (L1)");
-  } else if (cmd == "b2") {
-    tm_data[1] = 1;
-    Serial.println("-> Button 2 (R1)");
-  } else if (cmd == "b3") {
-    tm_data[2] = 1;
-    Serial.println("-> Button 3 (L2)");
-  } else if (cmd == "b4") {
-    tm_data[3] = 1;
-    Serial.println("-> Button 4 (R2)");
-  } else if (cmd == "w") {
-    tm_data[11] = 127; // left stick up
-    Serial.println("-> Left stick UP");
-  } else if (cmd == "x") {
-    tm_data[11] = -127; // left stick down
-    Serial.println("-> Left stick DOWN");
-  } else if (cmd == "a") {
-    tm_data[10] = -127; // left stick left
-    Serial.println("-> Left stick LEFT");
-  } else if (cmd == "d") {
-    tm_data[10] = 127; // left stick right
-    Serial.println("-> Left stick RIGHT");
-  } else if (cmd == "i") {
-    tm_data[13] = 127; // right stick up
-    Serial.println("-> Right stick UP");
-  } else if (cmd == "k") {
-    tm_data[13] = -127; // right stick down
+  if (strcmp(cmd, "1") == 0) {
+    tm_data[7] = 11; // p2=11 -> march
+    Serial.println("-> Mode: MARCH");
+  } else if (strcmp(cmd, "2") == 0) {
+    tm_data[7] = 12; // p2=12 -> walk
+    Serial.println("-> Mode: WALK");
+  } else if (strcmp(cmd, "3") == 0) {
+    tm_data[7] = 13; // p2=13 -> freestyle
+    Serial.println("-> Mode: FREESTYLE");
+  } else if (strcmp(cmd, "4") == 0) {
+    tm_data[7] = 14; // p2=14 -> trot
+    Serial.println("-> Mode: TROT");
+  } else if (strcmp(cmd, "5") == 0) {
+    tm_data[7] = 15; // p2=15 -> follow
+    Serial.println("-> Mode: FOLLOW");
+  } else if (strcmp(cmd, "r") == 0) {
+    tm_data[5] = 1;  // sel2 = 1 -> start
+    Serial.println("-> Robot START");
+  } else if (strcmp(cmd, "s") == 0) {
+    tm_data[5] = 1;  // sel2 = 1 -> stop (toggle)
+    Serial.println("-> Robot STOP");
+  } else if (strcmp(cmd, "w") == 0) {
+    tm_data[13] = 215; // right stick down (walk backward)
     Serial.println("-> Right stick DOWN");
-  } else if (cmd == "j") {
-    tm_data[12] = -127; // right stick left
+  } else if (strcmp(cmd, "x") == 0) {
+    tm_data[13] = 40;  // right stick up (walk forward)
+    Serial.println("-> Right stick UP");
+  } else if (strcmp(cmd, "a") == 0) {
+    tm_data[10] = 40;  // left stick left
+    Serial.println("-> Left stick LEFT");
+  } else if (strcmp(cmd, "d") == 0) {
+    tm_data[10] = 215; // left stick right
+    Serial.println("-> Left stick RIGHT");
+  } else if (strcmp(cmd, "i") == 0) {
+    tm_data[13] = 40;  // right stick up
+    Serial.println("-> Right stick UP");
+  } else if (strcmp(cmd, "k") == 0) {
+    tm_data[13] = 215; // right stick down
+    Serial.println("-> Right stick DOWN");
+  } else if (strcmp(cmd, "j") == 0) {
+    tm_data[12] = 40;  // right stick left
     Serial.println("-> Right stick LEFT");
-  } else if (cmd == "l") {
-    tm_data[12] = 127; // right stick right
+  } else if (strcmp(cmd, "l") == 0) {
+    tm_data[12] = 215; // right stick right
     Serial.println("-> Right stick RIGHT");
-  } else if (cmd == "0") {
+  } else if (strcmp(cmd, "0") == 0) {
     Serial.println("-> All stop / center");
-  } else if (cmd == "?" || cmd == "help") {
+  } else if (strcmp(cmd, "?") == 0 || strcmp(cmd, "help") == 0) {
     print_help();
   } else {
     Serial.print("Unknown command: ");
