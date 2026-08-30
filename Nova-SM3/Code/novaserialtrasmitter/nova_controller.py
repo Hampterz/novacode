@@ -679,8 +679,8 @@ class NovaController:
             
             # --- Step 2: Compute continuous joystick values from held keys ---
             ry = 127
-            if 'w' in held: ry = 215   # Forward
-            if 's' in held: ry = 40    # Backward
+            if 'w' in held: ry = 40    # Forward
+            if 's' in held: ry = 215   # Backward
 
             lx = 127
             if 'a' in held: lx = 215   # Left
@@ -728,7 +728,7 @@ class NovaController:
             # Print detailed log only when state actually changes
             if packet != self.last_sent_packet:
                 parts = []
-                if ry != 127: parts.append(f"ry={ry}({'FWD' if ry > 127 else 'BACK'})")
+                if ry != 127: parts.append(f"ry={ry}({'FWD' if ry < 127 else 'BACK'})")
                 if lx != 127: parts.append(f"lx={lx}({'LEFT' if lx > 127 else 'RIGHT'})")
                 if ly != 127: parts.append(f"ly={ly}")
                 if rx != 127: parts.append(f"rx={rx}")
@@ -758,13 +758,14 @@ class NovaController:
             try:
                 mode_name = MODE_NAMES.get(self.local_mode, f"#{self.local_mode}")
                 started = "ACTIVE" if self.local_started else "STOPPED"
+                mpu_str = "ON" if self.robot_mpu else "OFF"
                 if self.last_ack_time == 0:
                     robot_status = "⚠ ROBOT OFFLINE"
                 elif time.time() - self.last_ack_time > 5:
                     robot_status = "⚠ ROBOT OFFLINE"
                 else:
                     robot_status = "✓ ROBOT ONLINE"
-                self.mode_var.set(f"Mode: {mode_name} ({started})  |  {robot_status}")
+                self.mode_var.set(f"Mode: {mode_name} ({started})  |  MPU: {mpu_str}  |  {robot_status}")
             except:
                 pass
                     
@@ -848,16 +849,6 @@ class NovaController:
                                 if new_mode > 0 and new_mode <= 5:
                                     self.local_mode = new_mode
                                 self.local_started = (new_start > 0)
-
-                                # Update GUI safely from background thread
-                                mode_name = MODE_NAMES.get(self.robot_mode, f"#{self.robot_mode}")
-                                started = "ACTIVE" if self.robot_start_mode > 0 else "STOPPED"
-                                mpu_str = "ON" if self.robot_mpu else "OFF"
-                                display_text = f"Mode: {mode_name} ({started})  |  MPU: {mpu_str}"
-                                try:
-                                    self.master.after(0, lambda t=display_text: self.mode_var.set(t))
-                                except:
-                                    pass
                         elif line and not line.startswith("[ACK:"):
                             # Print any non-ACK serial messages from the transmitter
                             print(f"[NANO] {line}")

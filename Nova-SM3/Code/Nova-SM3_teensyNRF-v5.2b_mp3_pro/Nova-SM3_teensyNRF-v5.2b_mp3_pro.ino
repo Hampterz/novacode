@@ -140,7 +140,7 @@ Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x40);
 byte pwm_oe = 0;                  //boolean control for enable / disable output
 const float min_spd = 32.0;       //min is higher than max, since this is the time increment delay between servo calls 
 const float max_spd = 0.0;        //maximum, fastest speed
-float default_spd = 12.0;
+float default_spd = 3.0;
 float spd = default_spd;
 float spd_prev = default_spd;
 float spd_factor = 1.0;           //ratio factor used in movements
@@ -1006,10 +1006,9 @@ void update_servos() {
 */
 bool nrf_check() {
   bool resp = false;
-  uint8_t pipe;
 
   if (nrf_radio.available()) {
-    uint8_t bytes = nrf_radio.getPayloadSize();
+    uint8_t bytes = nrf_radio.getDynamicPayloadSize();
     if (bytes > sizeof(rc_data)) {
       // Packet is too large, it's corrupted or invalid.
       // We must read it to clear it from the NRF buffer, but we shouldn't overflow rc_data.
@@ -1019,6 +1018,19 @@ bool nrf_check() {
     }
     
     nrf_radio.read(&rc_data, bytes);
+    
+    // Validate packet: buttons and selectors should only ever be 0 or 1.
+    // If we receive a packet with random noise that passes the 16-bit CRC (1 in 65536 chance), 
+    // it will have random values > 1 for these byte fields.
+    // Exception: If it's an image chunk, rc_data[0] == 255.
+    if (rc_data[0] != 255) {
+      if (rc_data[0] > 1 || rc_data[1] > 1 || rc_data[2] > 1 || rc_data[3] > 1 ||
+          rc_data[4] > 1 || rc_data[5] > 1) {
+        nrf_radio.flush_rx();
+        return false; // Corrupted packet masquerading as valid
+      }
+    }
+
     resp = true;
 
     //send data as acknowledgement
@@ -3639,7 +3651,7 @@ void y_axis() {
     targetPos[LFC] = servoSweep[LFC][1];
     activeSweep[LFC] = 1;
 
-    servoSpeed[LFT] = limit_speed((7 * spd_factor));
+    servoSpeed[LFT] = limit_speed((2 * spd_factor));
     servoSweep[LFT][0] = limit_target(LFT, (servoHome[LFT] - (move_steps * .65)), 0);
     servoSweep[LFT][1] = limit_target(LFT, (servoHome[LFT] + (move_steps * .65)), 0);
     servoSweep[LFT][2] = 0;
@@ -3664,7 +3676,7 @@ void y_axis() {
     targetPos[RFC] = servoSweep[RFC][1];
     activeSweep[RFC] = 1;
 
-    servoSpeed[RFT] = limit_speed((7 * spd_factor));
+    servoSpeed[RFT] = limit_speed((2 * spd_factor));
     servoSweep[RFT][0] = limit_target(RFT, (servoHome[RFT] + (move_steps * .65)), 0);
     servoSweep[RFT][1] = limit_target(RFT, (servoHome[RFT] - (move_steps * .65)), 0);
     servoSweep[RFT][2] = 0;
@@ -3689,7 +3701,7 @@ void y_axis() {
     targetPos[LRC] = servoSweep[LRC][1];
     activeSweep[LRC] = 1;
 
-    servoSpeed[LRT] = limit_speed((7 * spd_factor));
+    servoSpeed[LRT] = limit_speed((2 * spd_factor));
     servoSweep[LRT][0] = limit_target(LRT, (servoHome[LRT] - (move_steps * .65)), 0);
     servoSweep[LRT][1] = limit_target(LRT, (servoHome[LRT] + (move_steps * .65)), 0);
     servoSweep[LRT][2] = 0;
@@ -3714,7 +3726,7 @@ void y_axis() {
     targetPos[RRC] = servoSweep[RRC][1];
     activeSweep[RRC] = 1;
 
-    servoSpeed[RRT] = limit_speed((7 * spd_factor));
+    servoSpeed[RRT] = limit_speed((2 * spd_factor));
     servoSweep[RRT][0] = limit_target(RRT, (servoHome[RRT] + (move_steps * .65)), 0);
     servoSweep[RRT][1] = limit_target(RRT, (servoHome[RRT] - (move_steps * .65)), 0);
     servoSweep[RRT][2] = 0;
@@ -4391,12 +4403,12 @@ void step_trot(int xdir, int ydir, int zdir) {
 
   //set tibia sweep movements
   if (!activeSweep[RRT]) {
-    update_sequencer(LF, LFC, limit_speed((7 * spd_factor)), servoStepMoves[LFC][0], 0, 0);
-    update_sequencer(RF, RFC, limit_speed((7 * spd_factor)), servoStepMoves[RFC][0], 0, 0);
-    update_sequencer(LF, LFF, limit_speed((7 * spd_factor)), servoStepMoves[LFF][0], 0, 0);
-    update_sequencer(RF, RFF, limit_speed((7 * spd_factor)), servoStepMoves[RFF][0], 0, 0);
+    update_sequencer(LF, LFC, limit_speed((2 * spd_factor)), servoStepMoves[LFC][0], 0, 0);
+    update_sequencer(RF, RFC, limit_speed((2 * spd_factor)), servoStepMoves[RFC][0], 0, 0);
+    update_sequencer(LF, LFF, limit_speed((2 * spd_factor)), servoStepMoves[LFF][0], 0, 0);
+    update_sequencer(RF, RFF, limit_speed((2 * spd_factor)), servoStepMoves[RFF][0], 0, 0);
     
-    servoSpeed[LFT] = limit_speed((7 * spd_factor));
+    servoSpeed[LFT] = limit_speed((2 * spd_factor));
     servoSweep[LFT][0] = limit_target(LFT, (gaitHome[LFT] - (move_steps * sinc0)), 0);
     servoSweep[LFT][1] = limit_target(LFT, (gaitHome[LFT] + (move_steps * sinc1)), 0);
     servoSweep[LFT][2] = 0;
@@ -4404,7 +4416,7 @@ void step_trot(int xdir, int ydir, int zdir) {
     targetPos[LFT] = servoSweep[LFT][1];
     activeSweep[LFT] = 1;
 
-    servoSpeed[RFT] = limit_speed((7 * spd_factor));
+    servoSpeed[RFT] = limit_speed((2 * spd_factor));
     servoSweep[RFT][0] = limit_target(RFT, (gaitHome[RFT] + (move_steps * sinc0)), 0);
     servoSweep[RFT][1] = limit_target(RFT, (gaitHome[RFT] - (move_steps * sinc1)), 0);
     servoSweep[RFT][2] = 0;
@@ -4412,7 +4424,7 @@ void step_trot(int xdir, int ydir, int zdir) {
     targetPos[RFT] = servoSweep[RFT][1];
     activeSweep[RFT] = 1;
 
-    servoSpeed[LRT] = limit_speed((7 * spd_factor));
+    servoSpeed[LRT] = limit_speed((2 * spd_factor));
     servoSweep[LRT][0] = limit_target(LRT, (gaitHome[LRT] + (move_steps * sinc2)), 0);
     servoSweep[LRT][1] = limit_target(LRT, (gaitHome[LRT] - (move_steps * sinc3)), 0);
     servoSweep[LRT][2] = 0;
@@ -4420,7 +4432,7 @@ void step_trot(int xdir, int ydir, int zdir) {
     targetPos[LRT] = servoSweep[LRT][1];
     activeSweep[LRT] = 1;
 
-    servoSpeed[RRT] = limit_speed((7 * spd_factor));
+    servoSpeed[RRT] = limit_speed((2 * spd_factor));
     servoSweep[RRT][0] = limit_target(RRT, (gaitHome[RRT] - (move_steps * sinc2)), 0);
     servoSweep[RRT][1] = limit_target(RRT, (gaitHome[RRT] + (move_steps * sinc3)), 0);
     servoSweep[RRT][2] = 0;
@@ -4440,20 +4452,16 @@ void step_trot(int xdir, int ydir, int zdir) {
 }
 
 void step_forward(int ydir, int xdir, int zdir) {
-  // GLOBAL STATE TRUE TROT GAIT: Diagonal pairs are locked to a single global sequence
-  int s = 40;
-  int s1f = -s;       // Phase 0: Swing forward in air
-  int s2f = -s;       // Phase 1: Plant forward
-  int s3f = s;        // Phase 2: Push backward
-  int s4f = s;        // Phase 3: Hold backward
+  // ============================================================
+  // TRUE 4-PHASE WAVE CREEP GAIT: Exactly 1 leg lifts at a time
+  // Stability: 3 legs always on ground during every single step
+  // Order: RR -> RF -> LR -> LF -> All 4 Push
+  // ============================================================
 
-  int s1t = 40;       // Phase 0: LIFT leg
-  int s2t = 0;        // Phase 1: PLANT leg
-  int s3t = 0;        // Phase 2: KEEP planted
-  int s4t = 0;        // Phase 3: KEEP planted
-
-  int cd = xdir / 3;
-  int csp = 2, fsp = 2, tsp_lift = 1, tsp_drop = 0;  
+  int lift = 35;       // Tibia lift height off ground
+  int fwd_front = 35;  // Front Femur forward stride
+  int fwd_rear = 30;   // Rear Femur forward stride
+  int cd = xdir / 4;   // Steering yaw offset if turning while walking
 
   bool all_done = (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
                    !activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
@@ -4461,94 +4469,76 @@ void step_forward(int ydir, int xdir, int zdir) {
                    !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT]);
 
   if (all_done) {
-    if (servoSequence[RF] == 0) {
-      // STATE 0: Pair 1 Swings (Phase 0), Pair 2 Pushes (Phase 2)
-      // Pair 1
-      update_sequencer(RF, RFC, (csp*spd_factor), (servoHome[RFC] + cd), 1, 0); // Advance state to 1
-      update_sequencer(RF, RFF, (fsp*spd_factor), (servoHome[RFF] + s1f), 1, 0);
-      update_sequencer(RF, RFT, (tsp_lift*spd_factor), (servoHome[RFT] + s1t), 1, 0);
-      update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + cd), 1, 0);
-      update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s1f), 1, 0);
-      update_sequencer(LR, LRT, (tsp_lift*spd_factor), (servoHome[LRT] - s1t), 1, 0);
-      // Pair 2
-      update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + cd), 1, 0);
-      update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s3f), 1, 0);
-      update_sequencer(LF, LFT, (fsp*spd_factor), (servoHome[LFT] + s3t), 1, 0);
-      update_sequencer(RR, RRC, (csp*spd_factor), (servoHome[RRC] + cd), 1, 0);
-      update_sequencer(RR, RRF, (fsp*spd_factor), (servoHome[RRF] + s3f), 1, 0);
-      update_sequencer(RR, RRT, (fsp*spd_factor), (servoHome[RRT] + s3t), 1, 0);
+    int phase = servoSequence[RF];
+
+    // ---- Phase 0: RR LIFT + SWING FORWARD IN AIR ----
+    if (phase == 0) {
+      update_sequencer(RF, RRT, (1.2 * spd_factor), (servoHome[RRT] + lift), 1, 0);
+      update_sequencer(RF, RRF, (1.5 * spd_factor), (servoHome[RRF] - fwd_rear), 1, 0);
+      if (cd != 0) update_sequencer(RF, RRC, (1.0 * spd_factor), (servoHome[RRC] + cd), 1, 0);
     }
-    else if (servoSequence[RF] == 1) {
-      // STATE 1: Pair 1 Plants (Phase 1), Pair 2 Holds (Phase 3)
-      // Pair 1
-      update_sequencer(RF, RFC, (csp*spd_factor), (servoHome[RFC] + cd), 2, 0); // Advance state to 2
-      update_sequencer(RF, RFF, (fsp*spd_factor), (servoHome[RFF] + s2f), 2, 0);
-      update_sequencer(RF, RFT, (tsp_drop*spd_factor), (servoHome[RFT] + s2t), 2, 0);
-      update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + cd), 2, 0);
-      update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s2f), 2, 0);
-      update_sequencer(LR, LRT, (tsp_drop*spd_factor), (servoHome[LRT] - s2t), 2, 0);
-      // Pair 2
-      update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + cd), 2, 0);
-      update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s4f), 2, 0);
-      update_sequencer(LF, LFT, (tsp_drop*spd_factor), (servoHome[LFT] - s4t), 2, 0);
-      update_sequencer(RR, RRC, (csp*spd_factor), (servoHome[RRC] + cd), 2, 0);
-      update_sequencer(RR, RRF, (fsp*spd_factor), (servoHome[RRF] + s4f), 2, 0);
-      update_sequencer(RR, RRT, (tsp_drop*spd_factor), (servoHome[RRT] + s4t), 2, 0);
+    // ---- Phase 1: RR PLANT FIRMLY ON GROUND ----
+    else if (phase == 1) {
+      update_sequencer(RF, RRT, (1.2 * spd_factor), servoHome[RRT], 2, 0);
     }
-    else if (servoSequence[RF] == 2) {
-      // STATE 2: Pair 1 Pushes (Phase 2), Pair 2 Swings (Phase 0)
-      // Pair 1
-      update_sequencer(RF, RFC, (csp*spd_factor), (servoHome[RFC] + cd), 3, 0); // Advance state to 3
-      update_sequencer(RF, RFF, (fsp*spd_factor), (servoHome[RFF] + s3f), 3, 0);
-      update_sequencer(RF, RFT, (fsp*spd_factor), (servoHome[RFT] + s3t), 3, 0);
-      update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + cd), 3, 0);
-      update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s3f), 3, 0);
-      update_sequencer(LR, LRT, (fsp*spd_factor), (servoHome[LRT] - s3t), 3, 0);
-      // Pair 2
-      update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + cd), 3, 0);
-      update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s1f), 3, 0);
-      update_sequencer(LF, LFT, (tsp_lift*spd_factor), (servoHome[LFT] - s1t), 3, 0);
-      update_sequencer(RR, RRC, (csp*spd_factor), (servoHome[RRC] + cd), 3, 0);
-      update_sequencer(RR, RRF, (fsp*spd_factor), (servoHome[RRF] + s1f), 3, 0);
-      update_sequencer(RR, RRT, (tsp_lift*spd_factor), (servoHome[RRT] + s1t), 3, 0);
+    // ---- Phase 2: RF LIFT + SWING FORWARD IN AIR ----
+    else if (phase == 2) {
+      update_sequencer(RF, RFT, (1.2 * spd_factor), (servoHome[RFT] + lift), 3, 0);
+      update_sequencer(RF, RFF, (1.5 * spd_factor), (servoHome[RFF] - fwd_front), 3, 0);
+      if (cd != 0) update_sequencer(RF, RFC, (1.0 * spd_factor), (servoHome[RFC] + cd), 3, 0);
     }
-    else if (servoSequence[RF] == 3) {
-      // STATE 3: Pair 1 Holds (Phase 3), Pair 2 Plants (Phase 1)
-      // Pair 1
-      update_sequencer(RF, RFC, (csp*spd_factor), (servoHome[RFC] + cd), 0, 0); // Loop to 0
-      update_sequencer(RF, RFF, (fsp*spd_factor), (servoHome[RFF] + s4f), 0, 0);
-      update_sequencer(RF, RFT, (tsp_drop*spd_factor), (servoHome[RFT] + s4t), 0, 0);
-      update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + cd), 0, 0);
-      update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s4f), 0, 0);
-      update_sequencer(LR, LRT, (tsp_drop*spd_factor), (servoHome[LRT] - s4t), 0, 0);
-      // Pair 2
-      update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + cd), 0, 0);
-      update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s2f), 0, 0);
-      update_sequencer(LF, LFT, (tsp_drop*spd_factor), (servoHome[LFT] - s2t), 0, 0);
-      update_sequencer(RR, RRC, (csp*spd_factor), (servoHome[RRC] + cd), 0, 0);
-      update_sequencer(RR, RRF, (fsp*spd_factor), (servoHome[RRF] + s2f), 0, 0);
-      update_sequencer(RR, RRT, (tsp_drop*spd_factor), (servoHome[RRT] + s2t), 0, 0);
-      
+    // ---- Phase 3: RF PLANT FIRMLY ON GROUND ----
+    else if (phase == 3) {
+      update_sequencer(RF, RFT, (1.2 * spd_factor), servoHome[RFT], 4, 0);
+    }
+    // ---- Phase 4: LR LIFT + SWING FORWARD IN AIR ----
+    else if (phase == 4) {
+      update_sequencer(RF, LRT, (1.2 * spd_factor), (servoHome[LRT] - lift), 5, 0);
+      update_sequencer(RF, LRF, (1.5 * spd_factor), (servoHome[LRF] + fwd_rear), 5, 0);
+      if (cd != 0) update_sequencer(RF, LRC, (1.0 * spd_factor), (servoHome[LRC] + cd), 5, 0);
+    }
+    // ---- Phase 5: LR PLANT FIRMLY ON GROUND ----
+    else if (phase == 5) {
+      update_sequencer(RF, LRT, (1.2 * spd_factor), servoHome[LRT], 6, 0);
+    }
+    // ---- Phase 6: LF LIFT + SWING FORWARD IN AIR ----
+    else if (phase == 6) {
+      update_sequencer(RF, LFT, (1.2 * spd_factor), (servoHome[LFT] - lift), 7, 0);
+      update_sequencer(RF, LFF, (1.5 * spd_factor), (servoHome[LFF] + fwd_front), 7, 0);
+      if (cd != 0) update_sequencer(RF, LFC, (1.0 * spd_factor), (servoHome[LFC] + cd), 7, 0);
+    }
+    // ---- Phase 7: LF PLANT FIRMLY ON GROUND ----
+    else if (phase == 7) {
+      update_sequencer(RF, LFT, (1.2 * spd_factor), servoHome[LFT], 8, 0);
+    }
+    // ---- Phase 8: ALL 4 FEET ON GROUND -> PUSH BODY FORWARD ----
+    else if (phase == 8) {
+      update_sequencer(RF, RRF, (2.0 * spd_factor), servoHome[RRF], 0, 0);
+      update_sequencer(RF, RFF, (2.0 * spd_factor), servoHome[RFF], 0, 0);
+      update_sequencer(RF, LRF, (2.0 * spd_factor), servoHome[LRF], 0, 0);
+      update_sequencer(RF, LFF, (2.0 * spd_factor), servoHome[LFF], 0, 0);
+      if (cd != 0) {
+        update_sequencer(RF, RRC, (1.0 * spd_factor), servoHome[RRC], 0, 0);
+        update_sequencer(RF, RFC, (1.0 * spd_factor), servoHome[RFC], 0, 0);
+        update_sequencer(RF, LRC, (1.0 * spd_factor), servoHome[LRC], 0, 0);
+        update_sequencer(RF, LFC, (1.0 * spd_factor), servoHome[LFC], 0, 0);
+      }
       lastMoveDelayUpdate = millis();
     }
   }
 }
 
 void step_backward(int ydir, int xdir, int zdir) {
-  // GLOBAL STATE TRUE TROT GAIT: Diagonal pairs are locked to a single global sequence
-  int s = 40;
-  int s1f = s;        // Phase 0: Swing backward in air
-  int s2f = s;        // Phase 1: Plant backward
-  int s3f = -s;       // Phase 2: Push forward
-  int s4f = -s;       // Phase 3: Hold forward
+  // ============================================================
+  // TRUE 4-PHASE WAVE CREEP GAIT (BACKWARD): Exactly 1 leg lifts at a time
+  // Stability: 3 legs always on ground during every single step
+  // Order: RF -> RR -> LF -> LR -> All 4 Push Backward
+  // ============================================================
 
-  int s1t = 40;       // Phase 0: LIFT leg
-  int s2t = 0;        // Phase 1: PLANT leg
-  int s3t = 0;        // Phase 2: KEEP planted
-  int s4t = 0;        // Phase 3: KEEP planted
-
-  int cd = xdir / 3;
-  int csp = 2, fsp = 2, tsp_lift = 1, tsp_drop = 0;  
+  int lift = 35;       // Tibia lift height off ground
+  int fwd_front = 35;  // Front Femur backward stride
+  int fwd_rear = 30;   // Rear Femur backward stride
+  int cd = xdir / 4;   // Steering yaw offset if turning while walking
 
   bool all_done = (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
                    !activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
@@ -4556,78 +4546,65 @@ void step_backward(int ydir, int xdir, int zdir) {
                    !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT]);
 
   if (all_done) {
-    if (servoSequence[RF] == 0) {
-      // STATE 0: Pair 1 Swings (Phase 0), Pair 2 Pushes (Phase 2)
-      // Pair 1
-      update_sequencer(RF, RFC, (csp*spd_factor), (servoHome[RFC] + cd), 1, 0); // Advance state to 1
-      update_sequencer(RF, RFF, (fsp*spd_factor), (servoHome[RFF] + s1f), 1, 0);
-      update_sequencer(RF, RFT, (tsp_lift*spd_factor), (servoHome[RFT] + s1t), 1, 0);
-      update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + cd), 1, 0);
-      update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s1f), 1, 0);
-      update_sequencer(LR, LRT, (tsp_lift*spd_factor), (servoHome[LRT] - s1t), 1, 0);
-      // Pair 2
-      update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + cd), 1, 0);
-      update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s3f), 1, 0);
-      update_sequencer(LF, LFT, (fsp*spd_factor), (servoHome[LFT] + s3t), 1, 0);
-      update_sequencer(RR, RRC, (csp*spd_factor), (servoHome[RRC] + cd), 1, 0);
-      update_sequencer(RR, RRF, (fsp*spd_factor), (servoHome[RRF] + s3f), 1, 0);
-      update_sequencer(RR, RRT, (fsp*spd_factor), (servoHome[RRT] + s3t), 1, 0);
+    int phase = servoSequence[RF];
+
+    // ---- Phase 0: RF LIFT + SWING BACKWARD IN AIR ----
+    if (phase == 0) {
+      update_sequencer(RF, RFT, (1.2 * spd_factor), (servoHome[RFT] + lift), 1, 0);
+      update_sequencer(RF, RFF, (1.5 * spd_factor), (servoHome[RFF] + fwd_front), 1, 0);
+      if (cd != 0) update_sequencer(RF, RFC, (1.0 * spd_factor), (servoHome[RFC] + cd), 1, 0);
     }
-    else if (servoSequence[RF] == 1) {
-      // STATE 1: Pair 1 Plants (Phase 1), Pair 2 Holds (Phase 3)
-      // Pair 1
-      update_sequencer(RF, RFC, (csp*spd_factor), (servoHome[RFC] + cd), 2, 0); // Advance state to 2
-      update_sequencer(RF, RFF, (fsp*spd_factor), (servoHome[RFF] + s2f), 2, 0);
-      update_sequencer(RF, RFT, (tsp_drop*spd_factor), (servoHome[RFT] + s2t), 2, 0);
-      update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + cd), 2, 0);
-      update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s2f), 2, 0);
-      update_sequencer(LR, LRT, (tsp_drop*spd_factor), (servoHome[LRT] - s2t), 2, 0);
-      // Pair 2
-      update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + cd), 2, 0);
-      update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s4f), 2, 0);
-      update_sequencer(LF, LFT, (tsp_drop*spd_factor), (servoHome[LFT] - s4t), 2, 0);
-      update_sequencer(RR, RRC, (csp*spd_factor), (servoHome[RRC] + cd), 2, 0);
-      update_sequencer(RR, RRF, (fsp*spd_factor), (servoHome[RRF] + s4f), 2, 0);
-      update_sequencer(RR, RRT, (tsp_drop*spd_factor), (servoHome[RRT] + s4t), 2, 0);
+    // ---- Phase 1: RF PLANT FIRMLY ON GROUND ----
+    else if (phase == 1) {
+      update_sequencer(RF, RFT, (1.2 * spd_factor), servoHome[RFT], 2, 0);
     }
-    else if (servoSequence[RF] == 2) {
-      // STATE 2: Pair 1 Pushes (Phase 2), Pair 2 Swings (Phase 0)
-      // Pair 1
-      update_sequencer(RF, RFC, (csp*spd_factor), (servoHome[RFC] + cd), 3, 0); // Advance state to 3
-      update_sequencer(RF, RFF, (fsp*spd_factor), (servoHome[RFF] + s3f), 3, 0);
-      update_sequencer(RF, RFT, (fsp*spd_factor), (servoHome[RFT] + s3t), 3, 0);
-      update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + cd), 3, 0);
-      update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s3f), 3, 0);
-      update_sequencer(LR, LRT, (fsp*spd_factor), (servoHome[LRT] - s3t), 3, 0);
-      // Pair 2
-      update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + cd), 3, 0);
-      update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s1f), 3, 0);
-      update_sequencer(LF, LFT, (tsp_lift*spd_factor), (servoHome[LFT] - s1t), 3, 0);
-      update_sequencer(RR, RRC, (csp*spd_factor), (servoHome[RRC] + cd), 3, 0);
-      update_sequencer(RR, RRF, (fsp*spd_factor), (servoHome[RRF] + s1f), 3, 0);
-      update_sequencer(RR, RRT, (tsp_lift*spd_factor), (servoHome[RRT] + s1t), 3, 0);
+    // ---- Phase 2: RR LIFT + SWING BACKWARD IN AIR ----
+    else if (phase == 2) {
+      update_sequencer(RF, RRT, (1.2 * spd_factor), (servoHome[RRT] + lift), 3, 0);
+      update_sequencer(RF, RRF, (1.5 * spd_factor), (servoHome[RRF] + fwd_rear), 3, 0);
+      if (cd != 0) update_sequencer(RF, RRC, (1.0 * spd_factor), (servoHome[RRC] + cd), 3, 0);
     }
-    else if (servoSequence[RF] == 3) {
-      // STATE 3: Pair 1 Holds (Phase 3), Pair 2 Plants (Phase 1)
-      // Pair 1
-      update_sequencer(RF, RFC, (csp*spd_factor), (servoHome[RFC] + cd), 0, 0); // Loop to 0
-      update_sequencer(RF, RFF, (fsp*spd_factor), (servoHome[RFF] + s4f), 0, 0);
-      update_sequencer(RF, RFT, (tsp_drop*spd_factor), (servoHome[RFT] + s4t), 0, 0);
-      update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + cd), 0, 0);
-      update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s4f), 0, 0);
-      update_sequencer(LR, LRT, (tsp_drop*spd_factor), (servoHome[LRT] - s4t), 0, 0);
-      // Pair 2
-      update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + cd), 0, 0);
-      update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s2f), 0, 0);
-      update_sequencer(LF, LFT, (tsp_drop*spd_factor), (servoHome[LFT] - s2t), 0, 0);
-      update_sequencer(RR, RRC, (csp*spd_factor), (servoHome[RRC] + cd), 0, 0);
-      update_sequencer(RR, RRF, (fsp*spd_factor), (servoHome[RRF] + s2f), 0, 0);
-      update_sequencer(RR, RRT, (tsp_drop*spd_factor), (servoHome[RRT] + s2t), 0, 0);
-      
+    // ---- Phase 3: RR PLANT FIRMLY ON GROUND ----
+    else if (phase == 3) {
+      update_sequencer(RF, RRT, (1.2 * spd_factor), servoHome[RRT], 4, 0);
+    }
+    // ---- Phase 4: LF LIFT + SWING BACKWARD IN AIR ----
+    else if (phase == 4) {
+      update_sequencer(RF, LFT, (1.2 * spd_factor), (servoHome[LFT] - lift), 5, 0);
+      update_sequencer(RF, LFF, (1.5 * spd_factor), (servoHome[LFF] - fwd_front), 5, 0);
+      if (cd != 0) update_sequencer(RF, LFC, (1.0 * spd_factor), (servoHome[LFC] + cd), 5, 0);
+    }
+    // ---- Phase 5: LF PLANT FIRMLY ON GROUND ----
+    else if (phase == 5) {
+      update_sequencer(RF, LFT, (1.2 * spd_factor), servoHome[LFT], 6, 0);
+    }
+    // ---- Phase 6: LR LIFT + SWING BACKWARD IN AIR ----
+    else if (phase == 6) {
+      update_sequencer(RF, LRT, (1.2 * spd_factor), (servoHome[LRT] - lift), 7, 0);
+      update_sequencer(RF, LRF, (1.5 * spd_factor), (servoHome[LRF] - fwd_rear), 7, 0);
+      if (cd != 0) update_sequencer(RF, LRC, (1.0 * spd_factor), (servoHome[LRC] + cd), 7, 0);
+    }
+    // ---- Phase 7: LR PLANT FIRMLY ON GROUND ----
+    else if (phase == 7) {
+      update_sequencer(RF, LRT, (1.2 * spd_factor), servoHome[LRT], 8, 0);
+    }
+    // ---- Phase 8: ALL 4 FEET ON GROUND -> PUSH BODY BACKWARD ----
+    else if (phase == 8) {
+      update_sequencer(RF, RFF, (2.0 * spd_factor), servoHome[RFF], 0, 0);
+      update_sequencer(RF, RRF, (2.0 * spd_factor), servoHome[RRF], 0, 0);
+      update_sequencer(RF, LFF, (2.0 * spd_factor), servoHome[LFF], 0, 0);
+      update_sequencer(RF, LRF, (2.0 * spd_factor), servoHome[LRF], 0, 0);
+      if (cd != 0) {
+        update_sequencer(RF, RFC, (1.0 * spd_factor), servoHome[RFC], 0, 0);
+        update_sequencer(RF, RRC, (1.0 * spd_factor), servoHome[RRC], 0, 0);
+        update_sequencer(RF, LFC, (1.0 * spd_factor), servoHome[LFC], 0, 0);
+        update_sequencer(RF, LRC, (1.0 * spd_factor), servoHome[LRC], 0, 0);
+      }
       lastMoveDelayUpdate = millis();
     }
   }
 }
+
 void step_left_right(int lorr, int xdir, int ydir) {
   // Turn-in-place gait (Yaw)
   // lorr: 1 = A key (Left), 0 = D key (Right)
@@ -4680,7 +4657,7 @@ void step_left_right(int lorr, int xdir, int ydir) {
 
     update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + c0), (servoSequence[LR] + 1), 0);
     update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] + s1f), servoSequence[LR], 0);
-    update_sequencer(LR, LRT, (tsp_lift*spd_factor), (servoHome[LRT] - s1t), servoSequence[LR], 0);
+    update_sequencer(LR, LRT, (tsp_lift*spd_factor), (servoHome[LRT] + s1t), servoSequence[LR], 0);
   }
   // Phase 1: PLANT leg on ground
   if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 1) {
@@ -4690,7 +4667,7 @@ void step_left_right(int lorr, int xdir, int ydir) {
 
     update_sequencer(LR, LRC, (csp*spd_factor), (servoHome[LRC] + c1), (servoSequence[LR] + 1), 0);
     update_sequencer(LR, LRF, (fsp*spd_factor), (servoHome[LRF] - s2f), servoSequence[LR], 0);
-    update_sequencer(LR, LRT, (tsp_drop*spd_factor), (servoHome[LRT] - s2t), servoSequence[LR], 0);
+    update_sequencer(LR, LRT, (tsp_drop*spd_factor), (servoHome[LRT] + s2t), servoSequence[LR], 0);
   }
   // Phase 2: KEEP planted
   if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 2) {
@@ -4722,7 +4699,7 @@ void step_left_right(int lorr, int xdir, int ydir) {
 
     update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + c0), (servoSequence[LF] + 1), 0);
     update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] + s1f), servoSequence[LF], 0);
-    update_sequencer(LF, LFT, (tsp_lift*spd_factor), (servoHome[LFT] - s1t), servoSequence[LF], 0);
+    update_sequencer(LF, LFT, (tsp_lift*spd_factor), (servoHome[LFT] + s1t), servoSequence[LF], 0);
   }
   // Phase 1: PLANT leg on ground
   if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 1) {
@@ -4732,7 +4709,7 @@ void step_left_right(int lorr, int xdir, int ydir) {
 
     update_sequencer(LF, LFC, (csp*spd_factor), (servoHome[LFC] + c1), (servoSequence[LF] + 1), 0);
     update_sequencer(LF, LFF, (fsp*spd_factor), (servoHome[LFF] - s2f), servoSequence[LF], 0);
-    update_sequencer(LF, LFT, (tsp_drop*spd_factor), (servoHome[LFT] - s2t), servoSequence[LF], 0);
+    update_sequencer(LF, LFT, (tsp_drop*spd_factor), (servoHome[LFT] + s2t), servoSequence[LF], 0);
   }
   // Phase 2: KEEP planted
   if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 2) {
