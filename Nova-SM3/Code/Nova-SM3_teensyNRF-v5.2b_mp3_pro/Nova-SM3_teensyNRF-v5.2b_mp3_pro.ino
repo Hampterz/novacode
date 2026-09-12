@@ -717,6 +717,10 @@ void setup() {
     //set default speed factor
     spd_factor = mapfloat(spd, min_spd, max_spd, min_spd_factor, max_spd_factor);
 
+    //enable servo outputs before homing so staged PWM pulses reach the servos
+    digitalWrite(OE_PIN, LOW);
+    delay(50);
+
     //initialize servos and populate related data arrays with defaults
     init_home();
     delay(500);
@@ -1192,6 +1196,7 @@ void remote_check() {
         remote_start_stop = 0;
         start_mode = 0;
         y_dir = 0; x_dir = 0; z_dir = 0;
+        go_home();
         set_stay();  // smoothly move all servos to servoHome positions
         if (debug) Serial.println(F("Remote: HOME"));
       } else if (p2 == 2) {
@@ -2595,33 +2600,37 @@ void init_home() {
     servoSequence[i] = 0;
   }
 
-  //set to home positions directly instead of crouching to prevent sliding/jumping
+  //set to home positions directly
   for (int i = 0; i < TOTAL_SERVOS; i++) {
     servoPos[i] = servoHome[i];
+    targetPos[i] = servoHome[i];
+    activeServo[i] = 0;
   }
 
-  //intitate servos in groups
-  //coaxes
-  pwm1.setPWM(servoSetup[RFC][1], 0, servoPos[RFC]);
-  pwm1.setPWM(servoSetup[LRC][1], 0, servoPos[LRC]);
-  pwm1.setPWM(servoSetup[RRC][1], 0, servoPos[RRC]);
-  pwm1.setPWM(servoSetup[LFC][1], 0, servoPos[LFC]);
-  delay(100);
+  //initiate servos in staged groups with settling delays to prevent high current brownouts
+  //1. coaxes (horizontal shoulder alignment)
+  pwm1.setPWM(servoSetup[RFC][1], 0, servoHome[RFC]);
+  pwm1.setPWM(servoSetup[LFC][1], 0, servoHome[LFC]);
+  pwm1.setPWM(servoSetup[RRC][1], 0, servoHome[RRC]);
+  pwm1.setPWM(servoSetup[LRC][1], 0, servoHome[LRC]);
+  delay(400);
 
-  //tibias
-  pwm1.setPWM(servoSetup[RFT][1], 0, servoPos[RFT]);
-  pwm1.setPWM(servoSetup[LRT][1], 0, servoPos[LRT]);
-  pwm1.setPWM(servoSetup[RRT][1], 0, servoPos[RRT]);
-  pwm1.setPWM(servoSetup[LFT][1], 0, servoPos[LFT]);
-  delay(100);
+  //2. tibias (leg lower extensions)
+  pwm1.setPWM(servoSetup[RFT][1], 0, servoHome[RFT]);
+  pwm1.setPWM(servoSetup[LFT][1], 0, servoHome[LFT]);
+  pwm1.setPWM(servoSetup[RRT][1], 0, servoHome[RRT]);
+  pwm1.setPWM(servoSetup[LRT][1], 0, servoHome[LRT]);
+  delay(400);
 
-  //femurs
-  pwm1.setPWM(servoSetup[RFF][1], 0, servoPos[RFF]);
-  pwm1.setPWM(servoSetup[LRF][1], 0, servoPos[LRF]);
-  pwm1.setPWM(servoSetup[RRF][1], 0, servoPos[RRF]);
-  pwm1.setPWM(servoSetup[LFF][1], 0, servoPos[LFF]);
-  delay(100);
+  //3. femurs (main stance elevation)
+  pwm1.setPWM(servoSetup[RFF][1], 0, servoHome[RFF]);
+  pwm1.setPWM(servoSetup[LFF][1], 0, servoHome[LFF]);
+  pwm1.setPWM(servoSetup[RRF][1], 0, servoHome[RRF]);
+  pwm1.setPWM(servoSetup[LRF][1], 0, servoHome[LRF]);
+  delay(500);
 
+  //ensure all 12 servo channels are solidly written to hardware
+  go_home();
   set_stay();
 }
 
@@ -5724,7 +5733,8 @@ void serial_command(String cmd) {
         detach_all();
       } else if (cmd == "home") {
         if (!plotter) Serial.println(F("home"));
-        set_home();
+        go_home();
+        set_stay();
       } else if (cmd == "pos") {
         Serial.println(F("\n--- CURRENT SERVO POSITIONS ---"));
         Serial.println(F("Servo\tHome\tCurrent\tTarget"));
