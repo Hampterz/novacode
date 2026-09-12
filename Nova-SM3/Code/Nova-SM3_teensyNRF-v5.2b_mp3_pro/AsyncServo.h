@@ -2,7 +2,7 @@
  * 
  *   NovaSM3 - a Spot-Mini Micro clone
  *   Version: 5.2b
- *   Version Date: 2026-09-12 (leveling and rear stride harmonization)
+ *   Version Date: 2026-09-12 (good forward walk & backward walk kinematics fix)
  *   
  *   Author:  Chris Locke - cguweb@gmail.com
  *   Nova's website:  https://novaspotmicro.com
