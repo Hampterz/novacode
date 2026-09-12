@@ -419,6 +419,7 @@ class NovaController:
         self.local_mode = 0
         self.local_started = False
         self.last_ack_time = 0
+        self.speed_val = 2  # Default to FAST (2ms step delay)
 
         self.setup_ui()
         self.refresh_ports()
@@ -480,6 +481,7 @@ class NovaController:
             ("I / K", "Pitch / Stride Mod"),
             ("J / L", "Yaw"),
             ("1 - 5", "March, Walk, Free, Trot, Follow"),
+            ("[ / ]", "Speed Down / Speed Up"),
             ("Q", "Start / Stop Mode"),
             ("H", "Home"),
             ("M", "Toggle MPU"),
@@ -496,6 +498,15 @@ class NovaController:
                      fg="#e94560", bg="#1a1a2e").pack(side='left')
             tk.Label(row, text=desc, anchor='w', font=("Consolas", 9),
                      fg="#a0a0a0", bg="#1a1a2e").pack(side='left', padx=8)
+
+        # --- Speed selector bar ---
+        speed_frame = tk.Frame(self.master, bg="#1a1a2e", pady=3)
+        speed_frame.pack(fill='x', padx=30)
+        self.speed_label_var = tk.StringVar(value="Speed: FAST (2ms)")
+        tk.Label(speed_frame, textvariable=self.speed_label_var, font=("Consolas", 9, "bold"),
+                 fg="#ffb703", bg="#1a1a2e").pack(side='left', padx=(0, 10))
+        for sname, sval in [("Slow", 6), ("Med", 4), ("Fast", 2), ("Turbo", 1)]:
+            tk.Button(speed_frame, text=sname, command=lambda v=sval: self.set_speed(v), **btn_style).pack(side='left', padx=2)
         
         # --- Status display ---
         self.mode_var = tk.StringVar(value="Mode: --  |  MPU: --")
@@ -554,6 +565,13 @@ class NovaController:
             # Update labels to show OFF
             self.radar.canvas.itemconfig(self.radar.left_label_id, text="L  --cm", fill="#00aa22")
             self.radar.canvas.itemconfig(self.radar.right_label_id, text="R  --cm", fill="#00aa22")
+
+    def set_speed(self, spd_val):
+        self.speed_val = spd_val
+        name_map = {6: "SLOW", 4: "MEDIUM", 2: "FAST", 1: "TURBO"}
+        name = name_map.get(spd_val, f"{spd_val}ms")
+        self.speed_label_var.set(f"Speed: {name} ({spd_val}ms)")
+        print(f"[SPEED] Step speed set to {name} ({spd_val}ms delay)")
 
     def refresh_ports(self):
         ports = list(serial.tools.list_ports.comports())
@@ -647,6 +665,18 @@ class NovaController:
             self._cmd_queue.put({"p2": mode_val})
             self.local_mode = int(key)
             self.local_started = False
+        elif key in ('[', '-', 'minus', 'bracketleft'):
+            # Decrease speed (longer delay)
+            levels = [1, 2, 4, 6]
+            curr_idx = levels.index(self.speed_val) if self.speed_val in levels else 1
+            if curr_idx < len(levels) - 1:
+                self.set_speed(levels[curr_idx + 1])
+        elif key in (']', '=', '+', 'plus', 'equal', 'bracketright'):
+            # Increase speed (shorter delay)
+            levels = [1, 2, 4, 6]
+            curr_idx = levels.index(self.speed_val) if self.speed_val in levels else 1
+            if curr_idx > 0:
+                self.set_speed(levels[curr_idx - 1])
 
     # =================================================================
     # TRANSMIT LOOP — Runs in background thread at 20Hz
@@ -707,7 +737,8 @@ class NovaController:
             # --- Step 4: Build packet values ---
             btn1 = btn2 = btn3 = btn4 = 0
             sel1 = sel2 = 0
-            p1 = p2 = 0
+            p1 = int(self.speed_val)
+            p2 = 0
             
             # Apply active one-shot commands
             still_active = []
@@ -732,6 +763,7 @@ class NovaController:
                 if lx != 127: parts.append(f"lx={lx}({'LEFT' if lx > 127 else 'RIGHT'})")
                 if ly != 127: parts.append(f"ly={ly}")
                 if rx != 127: parts.append(f"rx={rx}")
+                parts.append(f"spd={p1}ms")
                 if btn1: parts.append("BTN1")
                 if btn2: parts.append("BTN2")
                 if btn3: parts.append("BTN3")

@@ -140,7 +140,7 @@ Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x40);
 byte pwm_oe = 0;                  //boolean control for enable / disable output
 const float min_spd = 32.0;       //min is higher than max, since this is the time increment delay between servo calls 
 const float max_spd = 0.0;        //maximum, fastest speed
-float default_spd = 12.0;
+float default_spd = 2.5;          //fast responsive default speed (was 12.0)
 float spd = default_spd;
 float spd_prev = default_spd;
 float spd_factor = 1.0;           //ratio factor used in movements
@@ -342,7 +342,7 @@ int move_loops = 0;
 int move_switch = 0;
 float move_steps_min = -100;
 float move_steps_max = 100;
-float move_steps = 0;
+float move_steps = 30;
 float move_steps_prev = 0;
 float move_steps_x = 0;
 float move_steps_y = 0;
@@ -1841,60 +1841,17 @@ Serial.println(sel2p);
 */  
 
 
-      //set step_weight_factor_front from pot 1
-      if (p1 != p1p && (p1 > (p1p + pot_threshold) || p1 < (p1p - pot_threshold))) {
+      //set speed from remote controller via p1 (1 to 30 ms delay, lower is faster)
+      if (p1 > 0 && p1 != p1p) {
         p1p = p1;
         if (remote_select == 1 || remote_select == 2 || remote_select == 3 || remote_select == 4 || remote_select == 5) {
-          if (debug1) 
-            Serial.print(F("set swff : "));
-          step_weight_factor_front = mapfloat(p1, 0, 255, 1.0, 1.8);
-          if (debug1)
-            Serial.println(step_weight_factor_front);
-        }
-      }
-
-      //set speed from pot 2
-      if (!spd_lock) {
-        if (p2 != p2p && (p2 > (p2p + pot_threshold) || p2 < (p2p - pot_threshold))) {
-          p2p = p2;
-          if (remote_select == 1 || remote_select == 2 || remote_select == 3 || remote_select == 4 || remote_select == 5) {
-            if (debug1) 
-              Serial.print(F("set speed : "));
-            spd = map(p2, pot_min, pot_max, (min_spd * 100), (max_spd * 100)) / 100;
-            if (!spd) spd = 1;
-            set_speed();
-            if (debug1)
-              Serial.println(spd);
-          }
-        }
-      }
-
-      //set step_weight_factor_rear from pot 3
-      if (p3 != p3p && (p3 > (p3p + pot_threshold) || p3 < (p3p - pot_threshold))) {
-        p3p = p3;
-        if (remote_select == 1 || remote_select == 2 || remote_select == 3 || remote_select == 4 || remote_select == 5) {
-          if (debug1) 
-            Serial.print(F("set swfr : "));
-          step_weight_factor_rear = mapfloat(p1, 0, 255, 1.0, 1.8);
-          if (debug1)
-            Serial.println(step_weight_factor_rear);
-        }
-      }
-
-      //set steps from pot 4
-      if (!step_lock) {
-        if (p4 != p4p && (p4 > (p4p + (pot_threshold * 3)) || p4 < (p4p - (pot_threshold * 3)))) {
-          p4p = p4;
-        if (remote_select == 1 || remote_select == 2 || remote_select == 4 || remote_select == 5) {
-            move_steps = map(p4, pot_min, pot_max, (z_dir_steps[0] * 2), (z_dir_steps[1] * 2));
-            if (debug1) {
-              Serial.print(F("move steps: ")); Serial.println(move_steps);
-            }
-          } else if (remote_select == 3) {
-            z_dir = mapfloat(p4, pot_min, pot_max, z_dir_steps[1], z_dir_steps[0]);
-            if (debug1) {
-              Serial.print(F("z_dir: ")); Serial.println(z_dir);
-            }
+          spd = (float)p1;
+          if (spd < 1.0) spd = 1.0;
+          if (spd > 30.0) spd = 30.0;
+          set_speed();
+          if (debug1) {
+            Serial.print(F("set speed : "));
+            Serial.println(spd);
           }
         }
       }
@@ -4462,7 +4419,8 @@ void step_trot(int xdir, int ydir, int zdir) {
 
 void step_forward(int ydir, int xdir, int zdir) {
 
-  ydir = map(ydir, 1, y_dir_steps[1], (y_dir_steps[1] * 1.5), 5);  
+  // Scale stride proportionally with forward stick: 15 (gentle) to 30 (full)
+  ydir = map(ydir, 1, y_dir_steps[1], 15, 30);  
 
   int sc = (xdir / 3);
   int s1f = (ydir * 1.0);
@@ -4627,7 +4585,8 @@ void step_forward(int ydir, int xdir, int zdir) {
 
 void step_backward(int ydir, int xdir, int zdir) {
 
-  ydir = map(ydir, y_dir_steps[0], -1, -5, (y_dir_steps[0] * 1.5));
+  // Scale stride proportionally with backward stick: -30 (full) to -15 (gentle)
+  ydir = map(ydir, y_dir_steps[0], -1, -30, -15);
 
   int sc = (xdir / 3);
   int s1f = 15 - ydir;
@@ -4787,7 +4746,7 @@ void step_backward(int ydir, int xdir, int zdir) {
 }
 
 void step_left_right(int lorr, int xdir, int ydir) {   //where x is +right/-left, and y is +forward/-backward
-  spd = 12;  //1-10 (scale with move steps)
+  spd = 3;   // Fast and responsive turning (was 12)
   move_steps = 30; //20-110
 
 //scale either move_steps or xdir from the other (leg should lift more when greater xdir, and vice-versa)
