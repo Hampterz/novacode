@@ -4655,7 +4655,6 @@ void step_backward(int ydir, int xdir, int zdir) {
   int s2f_lr = (ydir * 1.5);
   int s3f_lr = (ydir * 2.5);
 
-  int s4f = 0;
   // Sustain stance extension during push phase so legs firmly support the body
   int s4t = (s3t * 0.7);
 
@@ -4726,7 +4725,7 @@ void step_backward(int ydir, int xdir, int zdir) {
   } else if (xdir < -2) {
     lspd = 1;
     rspd = 6;
-    rturn = (gaitHome[RFC] - (sc * 3));
+    rfturn = (gaitHome[RFC] - (sc * 3));
     lfturn = (gaitHome[LFC] + sc);
   }
 
