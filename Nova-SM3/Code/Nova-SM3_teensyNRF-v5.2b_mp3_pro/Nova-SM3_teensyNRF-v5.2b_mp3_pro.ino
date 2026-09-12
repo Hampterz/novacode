@@ -3,8 +3,8 @@
 /*
  * 
  *   NovaSM3 - a Spot-Mini Micro clone
- *   Version: 5.2
- *   Version Date: 2021-10-26
+ *   Version: 5.2b
+ *   Version Date: 2026-09-12
  *   
  *   Author:  Chris Locke - cguweb@gmail.com
  *   Nova's website:  https://novaspotmicro.com
