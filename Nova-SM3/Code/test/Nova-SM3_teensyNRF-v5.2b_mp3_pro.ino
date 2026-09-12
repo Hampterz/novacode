@@ -3,8 +3,8 @@
 /*
  * 
  *   NovaSM3 - a Spot-Mini Micro clone
- *   Version: 5.2
- *   Version Date: 2021-10-26
+ *   Version: 5.2b
+ *   Version Date: 2026-09-12 (good forward walk & stable backward walk kinematics)
  *   
  *   Author:  Chris Locke - cguweb@gmail.com
  *   Nova's website:  https://novaspotmicro.com
@@ -73,8 +73,8 @@ int  test_steps = 0;
 #define VERSION 5.2
 
 //debug vars for displaying operation runtime data for debugging
-const byte debug  = 0;            //general messages
-const byte debug1 = 0;            //remote commands and pir sensors
+const byte debug  = 1;            //general messages
+const byte debug1 = 1;            //remote commands and pir sensors
 const byte debug2 = 0;            //debug servo steps
 const byte debug3 = 0;            //ramping and sequencing
 const byte debug4 = 0;            //amperage and battery 
@@ -91,29 +91,28 @@ int debug_loops2 = 3;             //movement decremented loop
 int debug_spd = 10;               //default speed for debug movements
 
 //activate/deactivate devices
-byte slave_active = 1;            //activate slave arduino nano
+byte slave_active = 1;            //activate slave arduino nano (REQUIRED for USS sensors)
 byte pwm_active = 1;              //activate pwm controller / servos
 byte nrf_active = 1;              //activate NRF24 remote control
 byte serial_active = 1;           //activate serial monitor command input
 byte mpu_active = 0;              //activate MPU6050 
-byte rgb_active = 1;              //activate RGB modules
+byte rgb_active = 0;              //activate RGB modules
 byte oled_active = 1;             //activate OLED display
-byte pir_active = 1;              //activate PIR motion sensor
-byte uss_active = 0;              //activate Ultra-Sonic sensors
+byte pir_active = 0;              //activate PIR motion sensor
+byte uss_active = 1;              //activate Ultra-Sonic sensors
 byte amp_active = 0;              //activate amperate monitoring
-byte batt_active = 1;             //activate battery level monitoring
+byte batt_active = 0;             //activate battery level monitoring
 byte buzz_active = 0;             //activate simple tone sounds 
-byte melody_active = 1;           //activate melodic tone sounds 
-byte mp3_active = 1;              //activate if mp3 player installed
-byte splash_active = 1;           //show all loading graphics & sounds
-byte quick_boot = 0;              //skip most loading graphics & sounds
+byte melody_active = 0;           //activate melodic tone sounds 
+byte mp3_active = 0;              //activate if mp3 player installed
+byte splash_active = 0;           //show all loading graphics & sounds
+byte quick_boot = 1;              //skip most loading graphics & sounds
 
 #define MP3_PLAYER_TYPE 1         //set to 1 for Mini Pro or to 0 for Mini
 
 //include supporting libraries
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
-#include <T4_PowerButton.h>
 #include <SoftwareSerial.h>
 #include <SPI.h>
 #include <RF24.h>
@@ -141,7 +140,7 @@ Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x40);
 byte pwm_oe = 0;                  //boolean control for enable / disable output
 const float min_spd = 32.0;       //min is higher than max, since this is the time increment delay between servo calls 
 const float max_spd = 0.0;        //maximum, fastest speed
-float default_spd = 12.0;
+float default_spd = 2.5;          //fast responsive default speed (was 12.0)
 float spd = default_spd;
 float spd_prev = default_spd;
 float spd_factor = 1.0;           //ratio factor used in movements
@@ -171,7 +170,7 @@ unsigned int potInterval = 1000;
 unsigned long lastPotUpdate = 0;
 static const uint8_t PIN_MP3_TX = 1;
 static const uint8_t PIN_MP3_RX = 0; 
-SoftwareSerial softwareSerial(PIN_MP3_RX, PIN_MP3_TX);
+#define softwareSerial Serial1 // FIX: Teensy 4.0 does not support SoftwareSerial, use hardware Serial1 (pins 0/1)
 
 //mp3 player
 unsigned int mp3Interval = 50;
@@ -241,7 +240,8 @@ float mpu_mroll = 0.00;
 float mpu_mpitch = 0.00;
 float mpu_myaw = 0.00;
 float mpu_trigger_thresh = 0.05;
-float elapsedTime, currentTime, previousTime;
+float elapsedTime;
+unsigned long currentTime, previousTime;
 int mpu_is_active = mpu_active;
 int mpu_c = 0;
 
@@ -342,7 +342,7 @@ int move_loops = 0;
 int move_switch = 0;
 float move_steps_min = -100;
 float move_steps_max = 100;
-float move_steps = 0;
+float move_steps = 30;
 float move_steps_prev = 0;
 float move_steps_x = 0;
 float move_steps_y = 0;
@@ -374,6 +374,7 @@ byte move_pitch_body = 0;
 byte move_trot = 0;
 byte move_forward = 0;
 byte move_backward = 0;
+byte activeGaitPair = 0;
 byte move_left = 0;
 byte move_right = 0;
 byte move_march = 0;
@@ -413,6 +414,7 @@ void amperage_check(int aloop);
 void powering_down(void);
 
 //include local class / config files
+#include <EEPROM.h>
 #include "MPU6050_conf.h"
 #include "NovaServos.h"           //include motor setup vars and data arrays
 #include "AsyncServo.h"           //include motor class
@@ -439,6 +441,10 @@ AsyncServo s_LRT(&pwm1, LRT);
 
 
 void setup() {
+  //disable servo outputs immediately to prevent twitching during boot
+  pinMode(OE_PIN, OUTPUT);
+  digitalWrite(OE_PIN, HIGH);  // HIGH = outputs disabled on PCA9685
+
   //setup onboard LED
   pinMode(LED_PIN, OUTPUT);
   for (int b = 0; b < 3; b++) {
@@ -454,11 +460,9 @@ void setup() {
   if (debug) {
     Serial.begin(19200);
 
-    //allow serial to connect
-//teensy doesn't like this when not connected to serial even with debug disabled?!? 
-//    while (!Serial) {
-//      delay(1);
-//    }
+    //allow serial to connect (wait up to 2 seconds max)
+    while (!Serial && millis() < 2000) delay(10);
+    Serial.println("hi teensy working");
     delay(500);
     Serial.println(F("\n=============================================="));
     Serial.print(F("NOVA SM3 v"));
@@ -466,19 +470,11 @@ void setup() {
     Serial.println(F("=============================================="));
   }
 
-  //setup power off button
-  set_arm_power_button_callback(&powering_down);
-  if (debug) {
-    if (arm_power_button_pressed()) {
-      Serial.println("System Restarted");
-    }
-  }
-
   //setup 2nd i2c bus
-  //IMPORTANT: set pins BEFORE begin() on Teensy 4.0
+  Wire1.begin();
+  Wire1.setTimeout(10); // Prevent I2C from hanging forever if slave disconnects
   Wire1.setSDA(SDA2_PIN);
   Wire1.setSCL(SCL2_PIN);
-  Wire1.begin();
 
   if (mp3_active) {
 //    #if MP3_PLAYER_TYPE > 0
@@ -624,43 +620,7 @@ void setup() {
   }
 
 
-  //init mpu6050
-  if (mpu_active) {
-    Wire1.begin();
-    uint8_t c = readByte(MPU6050_ADDRESS, WHO_AM_I_MPU6050);  // Read WHO_AM_I register for MPU-6050
-    delay(1000); 
-  
-    if (c == 0x68) {  
-      if (debug) Serial.println(F("MPU6050 testing... "));
-      MPU6050SelfTest(SelfTest);
-      if (debug) {
-        delay(300);
-        Serial.println(F("  Acceleration Trim:"));
-        Serial.print(F("    x-axis : +/- ")); Serial.println(SelfTest[0],1);
-        Serial.print(F("    y-axis : +/- ")); Serial.println(SelfTest[1],1);
-        Serial.print(F("    z-axis : +/- ")); Serial.println(SelfTest[2],1);
-        Serial.println(F("  Gyration Trim:"));
-        Serial.print(F("    x-axis : +/- ")); Serial.println(SelfTest[3],1);
-        Serial.print(F("    y-axis : +/- ")); Serial.println(SelfTest[4],1);
-        Serial.print(F("    z-axis : +/- ")); Serial.println(SelfTest[5],1);
-      }
-      if(SelfTest[0] < 1.0f && SelfTest[1] < 1.0f && SelfTest[2] < 1.0f && SelfTest[3] < 1.0f && SelfTest[4] < 1.0f && SelfTest[5] < 1.0f) {
-        if (debug) {
-          Serial.println(F("  PASSED"));  
-          delay(1000);
-          if (debug) Serial.print(F("MPU6050 IMU intializing... "));
-        }
-        calibrateMPU6050(gyroBias, accelBias); // Calibrate gyro and accelerometers, load biases in bias registers  
-        initMPU6050(); 
-        if (debug) Serial.println(F("\t\t\tOK"));
-      } else {
-        if (debug) {
-          Serial.print(F("  Error: Could not connect to MPU6050 on 0x"));
-          Serial.println(c, HEX);
-        }
-      }
-    }
-  }
+
 
   //init pir sensors
   if (pir_active) {
@@ -721,8 +681,7 @@ void setup() {
   if (nrf_active) {
     if (!nrf_radio.begin()) {
       if (debug8) Serial.println(F("radio hardware is not responding!!"));
-      //gracefully disable radio instead of hanging forever
-      nrf_active = 0;
+      while (1) {}
     } else {
       nrf_radio.setPALevel(RF24_PA_LOW);
       nrf_radio.setPayloadSize(sizeof(rc_data));
@@ -759,11 +718,14 @@ void setup() {
     //set default speed factor
     spd_factor = mapfloat(spd, min_spd, max_spd, min_spd_factor, max_spd_factor);
 
+    //enable servo outputs before homing so staged PWM pulses reach the servos
+    digitalWrite(OE_PIN, LOW);
+    delay(50);
+
     //initialize servos and populate related data arrays with defaults
     init_home();
-    delay(1000);
+    delay(500);
     if (debug) Serial.println(F("\t\t\tOK"));
-  }
 
   if (melody_active) {
     if (mp3_active) {
@@ -809,6 +771,55 @@ void setup() {
     delay(1000);
   }
 
+  //now enable servo outputs - everything is initialized, positions are loaded
+  digitalWrite(OE_PIN, LOW);  // LOW = outputs enabled
+  delay(1000);  // give servos time to smoothly reach home positions
+
+  //init mpu6050 - MUST be done after servos are enabled so robot is standing level!
+  // Initialize regardless of mpu_active so it can be toggled remotely later
+  Wire1.begin();
+  Wire1.setTimeout(10); // Prevent I2C from hanging forever if slave disconnects
+    uint8_t c = readByte(MPU6050_ADDRESS, WHO_AM_I_MPU6050);  // Read WHO_AM_I register for MPU-6050
+    delay(1000); 
+  
+    if (c == 0x68) {  
+      if (debug) Serial.println(F("MPU6050 testing... "));
+      MPU6050SelfTest(SelfTest);
+      if (debug) {
+        delay(300);
+        Serial.println(F("  Acceleration Trim:"));
+        Serial.print(F("    x-axis : +/- ")); Serial.println(SelfTest[0],1);
+        Serial.print(F("    y-axis : +/- ")); Serial.println(SelfTest[1],1);
+        Serial.print(F("    z-axis : +/- ")); Serial.println(SelfTest[2],1);
+        Serial.println(F("  Gyration Trim:"));
+        Serial.print(F("    x-axis : +/- ")); Serial.println(SelfTest[3],1);
+        Serial.print(F("    y-axis : +/- ")); Serial.println(SelfTest[4],1);
+        Serial.print(F("    z-axis : +/- ")); Serial.println(SelfTest[5],1);
+      }
+      if(SelfTest[0] < 1.0f && SelfTest[1] < 1.0f && SelfTest[2] < 1.0f && SelfTest[3] < 1.0f && SelfTest[4] < 1.0f && SelfTest[5] < 1.0f) {
+        if (debug) {
+          Serial.println(F("  PASSED"));  
+          delay(1000);
+          if (debug) Serial.print(F("MPU6050 IMU intializing... "));
+        }
+        if (EEPROM.read(100) == 0x55) {
+          EEPROM.get(101, gyroBias);
+          EEPROM.get(120, accelBias);
+          if (debug) Serial.print(F("(Loaded from EEPROM) "));
+        } else {
+          calibrateMPU6050(gyroBias, accelBias); // Calibrate gyro and accelerometers, load biases in bias registers  
+        }
+        initMPU6050(); 
+        if (debug) Serial.println(F("\t\t\tOK"));
+      } else {
+        if (debug) {
+          Serial.print(F("  Error: Could not connect to MPU6050 on 0x"));
+          Serial.println(c, HEX);
+        }
+      }
+    }
+  }
+
   if (!mpu_active) {
     if (debug) {
       Serial.println(F("\nNova SM3... \t\t\t\tReady!"));
@@ -829,6 +840,9 @@ void setup() {
   if (!quick_boot) {
     delay(1000);
   }
+  
+  // Sync the MPU timer so the first loop doesn't have a massive elapsedTime spike
+  currentTime = millis();
 }
 
 
@@ -997,15 +1011,47 @@ void update_servos() {
 */
 bool nrf_check() {
   bool resp = false;
-  uint8_t pipe;
 
-  if (nrf_radio.available(&pipe)) {
-    uint8_t bytes = nrf_radio.getPayloadSize();
+  if (nrf_radio.available()) {
+    uint8_t bytes = nrf_radio.getDynamicPayloadSize();
+    if (bytes > sizeof(rc_data)) {
+      // Packet is too large, it's corrupted or invalid.
+      // We must read it to clear it from the NRF buffer, but we shouldn't overflow rc_data.
+      uint8_t dummy[32];
+      nrf_radio.read(&dummy, bytes);
+      return false; // discard
+    }
+    
     nrf_radio.read(&rc_data, bytes);
+    
+    // Validate packet: buttons and selectors should only ever be 0 or 1.
+    // If we receive a packet with random noise that passes the 16-bit CRC (1 in 65536 chance), 
+    // it will have random values > 1 for these byte fields.
+    // Exception: If it's an image chunk, rc_data[0] == 255.
+    if (rc_data[0] != 255) {
+      if (rc_data[0] > 1 || rc_data[1] > 1 || rc_data[2] > 1 || rc_data[3] > 1 ||
+          rc_data[4] > 1 || rc_data[5] > 1) {
+        nrf_radio.flush_rx();
+        return false; // Corrupted packet masquerading as valid
+      }
+    }
+
     resp = true;
 
     //send data as acknowledgement
     nrf_ack();
+
+    // Check for Image chunk
+    if (rc_data[0] == 255) {
+      if (slave_active || oled_active) {
+        Wire1.beginTransmission((uint8_t)SLAVE_ID);
+        for (int i = 0; i < 14; i++) {
+          Wire1.write(rc_data[i]);
+        }
+        Wire1.endTransmission();
+      }
+      return true; // Skip normal parsing
+    }
 
     //set remote control vars from nrf received data
     //fire buttons
@@ -1036,8 +1082,26 @@ bool nrf_check() {
       }
       Serial.println(" DATA REC");
     }
+    
+    // Detailed remote control debug: only print when something interesting arrives
+    if (debug1) {
+      bool has_action = (sel2 != 0 || p2 != 0 || ry != 127 || lx != 127 || ly != 127 || rx != 127 ||
+                         btn1 != 0 || btn2 != 0 || btn3 != 0 || btn4 != 0);
+      if (has_action) {
+        Serial.print(F("[NRF_RX] sel2=")); Serial.print(sel2);
+        Serial.print(F(" p2=")); Serial.print(p2);
+        Serial.print(F(" lx=")); Serial.print(lx);
+        Serial.print(F(" ly=")); Serial.print(ly);
+        Serial.print(F(" rx=")); Serial.print(rx);
+        Serial.print(F(" ry=")); Serial.print(ry);
+        if (btn1||btn2||btn3||btn4) {
+          Serial.print(F(" btn=")); Serial.print(btn1);Serial.print(btn2);Serial.print(btn3);Serial.print(btn4);
+        }
+        Serial.println();
+      }
+    }
+    lastNRFUpdate = millis();
   }
-  lastNRFUpdate = millis();
 
   return resp;
 }
@@ -1056,8 +1120,8 @@ void nrf_ack() {
     tm_data[6] = remote_select;
     tm_data[7] = start_mode;
     tm_data[8] = mpu_active;
-    tm_data[9] = distance_l;            //USS left distance for radar
-    tm_data[10] = distance_r;           //USS right distance for radar
+    tm_data[9] = constrain(distance_l, 0, 255);   // left USS distance (cm)
+    tm_data[10] = constrain(distance_r, 0, 255);  // right USS distance (cm)
     
     if (debug8) {
       for (int i = 0; i < data_num; i++) {
@@ -1078,7 +1142,119 @@ void nrf_ack() {
 */
 void remote_check() {
 
+  // NRF disconnect failsafe: if no radio data for 1 second, stop everything
+  if (lastNRFUpdate > 0 && (millis() - lastNRFUpdate > 1000)) {
+    if (start_mode != 0 || move_march || move_trot || move_follow) {
+      if (debug) Serial.println(F("NRF TIMEOUT: Controller disconnected, stopping robot"));
+      set_stop_active();
+      set_stop();
+      move_march = 0;
+      move_forward = 0;
+      move_backward = 0;
+      move_left = 0;
+      move_right = 0;
+      move_trot = 0;
+      move_follow = 0;
+      remote_start_stop = 0;
+      start_mode = 0;
+      y_dir = 0; x_dir = 0; z_dir = 0;
+    }
+    
+    // Auto-recover NRF24L01 if offline for more than 2 seconds (e.g. brownout freeze)
+    if (millis() - lastNRFUpdate > 2000) {
+      if (debug) Serial.println(F("NRF OFFLINE: Attempting hardware re-init..."));
+      nrf_radio.begin();
+      nrf_radio.setPALevel(RF24_PA_LOW);
+      nrf_radio.setPayloadSize(sizeof(rc_data));
+      nrf_radio.setChannel(124);
+      nrf_radio.openReadingPipe(1, address[!radioNumber]);
+      nrf_radio.enableAckPayload();
+      nrf_radio.startListening();
+      nrf_radio.writeAckPayload(1, &tm_data, sizeof(tm_data));
+      lastNRFUpdate = millis(); // Reset so we wait a full 2s before trying again
+    }
+    return;
+  }
+
   if (nrf_check()) {
+
+    // ===== Special commands via p2 (always processed, even during demos) =====
+    // p2 == 1: Home command
+    // p2 == 2: Toggle MPU on/off
+    // p2 == 11-15: Direct mode selection (1-5)
+    if (p2 >= 1 && p2 != p2p) {
+      if (p2 == 1) {
+        // HOME: stop everything, smoothly go to home position
+        set_stop_active();
+        set_stop();
+        move_march = 0;
+        move_forward = 0;
+        move_backward = 0;
+        move_left = 0;
+        move_right = 0;
+        move_trot = 0;
+        move_follow = 0;
+        remote_start_stop = 0;
+        start_mode = 0;
+        y_dir = 0; x_dir = 0; z_dir = 0;
+        go_home();
+        set_stay();  // smoothly move all servos to servoHome positions
+        if (debug) Serial.println(F("Remote: HOME"));
+      } else if (p2 == 2) {
+        // Toggle MPU
+        if (mpu_active) {
+          mpu_active = 0;
+          mpu_is_active = 0;
+          if (debug) Serial.println(F("Remote: MPU OFF"));
+        } else {
+          mpu_active = 1;
+          mpu_is_active = 1;
+          mroll = 0; mpitch = 0; myaw = 0;
+          gyroAngleX = 0; gyroAngleY = 0;
+          accAngleX = 0; accAngleY = 0;
+          mpu_mroll = 0; mpu_mpitch = 0; mpu_myaw = 0;
+          if (debug) Serial.println(F("Remote: MPU ON"));
+        }
+      } else if (p2 == 3) {
+        // SIT
+        set_stop_active();
+        set_stop();
+        move_march = 0; move_forward = 0; move_backward = 0;
+        move_left = 0; move_right = 0; move_trot = 0; move_follow = 0;
+        remote_start_stop = 0; start_mode = 0;
+        y_dir = 0; x_dir = 0; z_dir = 0;
+        set_sit();
+        if (debug) Serial.println(F("Remote: SIT"));
+      } else if (p2 == 4) {
+        // LAY DOWN / CROUCH
+        set_stop_active();
+        set_stop();
+        move_march = 0; move_forward = 0; move_backward = 0;
+        move_left = 0; move_right = 0; move_trot = 0; move_follow = 0;
+        remote_start_stop = 0; start_mode = 0;
+        y_dir = 0; x_dir = 0; z_dir = 0;
+        set_crouch();
+        if (debug) Serial.println(F("Remote: LAY DOWN"));
+      } else if (p2 == 5) {
+        // Show Custom Image on OLED
+        if (oled_active) {
+          oled_request((char*)"z");
+        }
+        if (debug) Serial.println(F("Remote: CUSTOM IMAGE OLED"));
+      } else if (p2 >= 11 && p2 <= 15) {
+        if (remote_select != p2 - 10) {
+          remote_select = p2 - 10;
+          remote_start_stop = 0;
+          start_mode = 0;
+          set_stop_active();
+          if (debug) { Serial.print(F("Remote: Direct Mode ")); Serial.println(remote_select); }
+        }
+      }
+      p2p = p2;
+    } else if (p2 == 0 && p2p != 0) {
+      p2p = 0; // reset previous when key released
+    }
+
     if (!move_demo && !move_funplay) {
 /*
 Serial.print("here1 : sel1 / sel1p ");
@@ -1284,7 +1460,6 @@ Serial.println(sel2p);
               rgb_request((char*)"OtEn");
             }
           }
-          set_stop();
         }
 
         //left x joystick modifier
@@ -1311,6 +1486,9 @@ Serial.println(sel2p);
             move_left = 0;
             if (debug1)
               Serial.println(F("stop move left"));
+          }
+          if (!move_forward && !move_backward) {
+            set_stop();
           }
         }
       } else if (remote_select == 3 && start_mode == 3) {
@@ -1664,60 +1842,17 @@ Serial.println(sel2p);
 */  
 
 
-      //set step_weight_factor_front from pot 1
-      if (p1 != p1p && (p1 > (p1p + pot_threshold) || p1 < (p1p - pot_threshold))) {
+      //set speed from remote controller via p1 (1 to 30 ms delay, lower is faster)
+      if (p1 > 0 && p1 != p1p) {
         p1p = p1;
         if (remote_select == 1 || remote_select == 2 || remote_select == 3 || remote_select == 4 || remote_select == 5) {
-          if (debug1) 
-            Serial.print(F("set swff : "));
-          step_weight_factor_front = mapfloat(p1, 0, 255, 1.0, 1.8);
-          if (debug1)
-            Serial.println(step_weight_factor_front);
-        }
-      }
-
-      //set speed from pot 2
-      if (!spd_lock) {
-        if (p2 != p2p && (p2 > (p2p + pot_threshold) || p2 < (p2p - pot_threshold))) {
-          p2p = p2;
-          if (remote_select == 1 || remote_select == 2 || remote_select == 3 || remote_select == 4 || remote_select == 5) {
-            if (debug1) 
-              Serial.print(F("set speed : "));
-            spd = map(p2, pot_min, pot_max, (min_spd * 100), (max_spd * 100)) / 100;
-            if (!spd) spd = 1;
-            set_speed();
-            if (debug1)
-              Serial.println(spd);
-          }
-        }
-      }
-
-      //set step_weight_factor_rear from pot 3
-      if (p3 != p3p && (p3 > (p3p + pot_threshold) || p3 < (p3p - pot_threshold))) {
-        p3p = p3;
-        if (remote_select == 1 || remote_select == 2 || remote_select == 3 || remote_select == 4 || remote_select == 5) {
-          if (debug1) 
-            Serial.print(F("set swfr : "));
-          step_weight_factor_rear = mapfloat(p1, 0, 255, 1.0, 1.8);
-          if (debug1)
-            Serial.println(step_weight_factor_rear);
-        }
-      }
-
-      //set steps from pot 4
-      if (!step_lock) {
-        if (p4 != p4p && (p4 > (p4p + (pot_threshold * 3)) || p4 < (p4p - (pot_threshold * 3)))) {
-          p4p = p4;
-        if (remote_select == 1 || remote_select == 2 || remote_select == 4 || remote_select == 5) {
-            move_steps = map(p4, pot_min, pot_max, (z_dir_steps[0] * 2), (z_dir_steps[1] * 2));
-            if (debug1) {
-              Serial.print(F("move steps: ")); Serial.println(move_steps);
-            }
-          } else if (remote_select == 3) {
-            z_dir = mapfloat(p4, pot_min, pot_max, z_dir_steps[1], z_dir_steps[0]);
-            if (debug1) {
-              Serial.print(F("z_dir: ")); Serial.println(z_dir);
-            }
+          spd = (float)p1;
+          if (spd < 1.0) spd = 1.0;
+          if (spd > 30.0) spd = 30.0;
+          set_speed();
+          if (debug1) {
+            Serial.print(F("set speed : "));
+            Serial.println(spd);
           }
         }
       }
@@ -2062,14 +2197,22 @@ void uss_check() {
     distance_l = prev_distance_l = dist_lt;
   }
 
+  if (debug7) {
+    Serial.print(F("USS -> L: "));
+    Serial.print(dist_lt);
+    Serial.print(F(" cm | R: "));
+    Serial.print(dist_rt);
+    Serial.println(F(" cm"));
+  }
+
   if (oled_active) {
     oled_request((char*)"c");
   }
 
-    if (debug7) {
-      Serial.print(F("USS LEFT: "));Serial.print(distance_l);
-      Serial.print(F("USS RIGHT: "));Serial.println(distance_r);
-    }
+  if (debug7) {
+    Serial.print(F("USS LEFT: "));Serial.print(distance_l);
+    Serial.print(F("USS RIGHT: "));Serial.println(distance_r);
+  }
 
 
 
@@ -2141,12 +2284,9 @@ void get_mpu() {
     getAres();
     
     // calculate the accleration value into actual g's
-//    ax = (float)accelCount[0]*aRes - accelBias[0];  // get actual g value, this depends on scale being set
-//    ay = (float)accelCount[1]*aRes - accelBias[1];   
-//    az = (float)accelCount[2]*aRes - accelBias[2];  
-    ax = (float)accelCount[0] - SelfTest[0];
-    ay = (float)accelCount[1] - SelfTest[1];   
-    az = (float)accelCount[2] - SelfTest[2];  
+    ax = (float)accelCount[0]*aRes - accelBias[0];  // get actual g value, this depends on scale being set
+    ay = (float)accelCount[1]*aRes - accelBias[1];   
+    az = (float)accelCount[2]*aRes - accelBias[2];  
 
 
     // Calculating Roll and Pitch from the accelerometer data
@@ -2169,8 +2309,7 @@ void get_mpu() {
     // Currently the raw values are in degrees per seconds, deg/s, so we need to multiply by seconds (s) to get the angle in degrees
     previousTime = currentTime;        // Previous time is stored before the actual time read
     currentTime = millis();            // Current time actual time read
-    elapsedTime = (currentTime - previousTime) / 1000; // Divide by 1000 to get seconds
-
+    elapsedTime = (float)(currentTime - previousTime) / 1000.0; // Divide by 1000.0 to get seconds correctly
     gyroAngleX = gyroAngleX + gx * (elapsedTime/2); // deg/s * s = deg
     gyroAngleY = gyroAngleY + gy * (elapsedTime/2);
     myaw = (myaw + gz * (elapsedTime/2));
@@ -2178,6 +2317,10 @@ void get_mpu() {
     // Complementary filter - combine acceleromter and gyro angle values
     mroll = (0.97 * gyroAngleX + 0.03 * accAngleX);
     mpitch = (0.97 * gyroAngleY + 0.03 * accAngleY);
+    
+    // Apply a deadband to eliminate micro-adjustments and twitching when standing still
+    if (abs(mroll) < 2.0) mroll = 0.0;
+    if (abs(mpitch) < 2.0) mpitch = 0.0;
   }  
 
   if (!plotter && debug5) {
@@ -2415,47 +2558,37 @@ void init_home() {
     servoSequence[i] = 0;
   }
 
-  //set crouched positions
+  //set to home positions directly
   for (int i = 0; i < TOTAL_SERVOS; i++) {
-    if (is_tibia(i)) {
-      if (is_left_leg(i)) {
-        servoPos[i] = (servoLimit[i][1] + 40);
-      } else {
-        servoPos[i] = (servoLimit[i][1] - 40);
-      }
-    } else if (is_femur(i)) {
-      if (is_left_leg(i)) {
-        servoPos[i] = (servoLimit[i][0] - 40);
-      } else {
-        servoPos[i] = (servoLimit[i][0] + 40);
-      }
-    } else {
-      servoPos[i] = servoHome[i];
-    }
+    servoPos[i] = servoHome[i];
+    targetPos[i] = servoHome[i];
+    activeServo[i] = 0;
   }
 
-  //intitate servos in groups
-  //coaxes
-  pwm1.setPWM(servoSetup[RFC][1], 0, servoPos[RFC]);
-  pwm1.setPWM(servoSetup[LRC][1], 0, servoPos[LRC]);
-  pwm1.setPWM(servoSetup[RRC][1], 0, servoPos[RRC]);
-  pwm1.setPWM(servoSetup[LFC][1], 0, servoPos[LFC]);
-  delay(1000);
+  //initiate servos in staged groups with settling delays to prevent high current brownouts
+  //1. coaxes (horizontal shoulder alignment)
+  pwm1.setPWM(servoSetup[RFC][1], 0, servoHome[RFC]);
+  pwm1.setPWM(servoSetup[LFC][1], 0, servoHome[LFC]);
+  pwm1.setPWM(servoSetup[RRC][1], 0, servoHome[RRC]);
+  pwm1.setPWM(servoSetup[LRC][1], 0, servoHome[LRC]);
+  delay(400);
 
-  //tibias
-  pwm1.setPWM(servoSetup[RFT][1], 0, servoPos[RFT]);
-  pwm1.setPWM(servoSetup[LRT][1], 0, servoPos[LRT]);
-  pwm1.setPWM(servoSetup[RRT][1], 0, servoPos[RRT]);
-  pwm1.setPWM(servoSetup[LFT][1], 0, servoPos[LFT]);
-  delay(1000);
+  //2. tibias (leg lower extensions)
+  pwm1.setPWM(servoSetup[RFT][1], 0, servoHome[RFT]);
+  pwm1.setPWM(servoSetup[LFT][1], 0, servoHome[LFT]);
+  pwm1.setPWM(servoSetup[RRT][1], 0, servoHome[RRT]);
+  pwm1.setPWM(servoSetup[LRT][1], 0, servoHome[LRT]);
+  delay(400);
 
-  //femurs
-  pwm1.setPWM(servoSetup[RFF][1], 0, servoPos[RFF]);
-  pwm1.setPWM(servoSetup[LRF][1], 0, servoPos[LRF]);
-  pwm1.setPWM(servoSetup[RRF][1], 0, servoPos[RRF]);
-  pwm1.setPWM(servoSetup[LFF][1], 0, servoPos[LFF]);
-  delay(1000);
+  //3. femurs (main stance elevation)
+  pwm1.setPWM(servoSetup[RFF][1], 0, servoHome[RFF]);
+  pwm1.setPWM(servoSetup[LFF][1], 0, servoHome[LFF]);
+  pwm1.setPWM(servoSetup[RRF][1], 0, servoHome[RRF]);
+  pwm1.setPWM(servoSetup[LRF][1], 0, servoHome[LRF]);
+  delay(500);
 
+  //ensure all 12 servo channels are solidly written to hardware
+  go_home();
   set_stay();
 }
 
@@ -2562,6 +2695,7 @@ void set_stop() {
   for (int l = 0; l < TOTAL_LEGS; l++) {
     servoSequence[l] = 0;
   }
+  activeGaitPair = 0;
   set_home();
 }
 
@@ -2573,6 +2707,7 @@ void set_stop_active() {
   for (int l = 0; l < TOTAL_LEGS; l++) {
     servoSequence[l] = 0;
   }
+  activeGaitPair = 0;
   use_ramp = 0;
 
   moving = 0;
@@ -2673,7 +2808,7 @@ void set_axis(float roll_step, float pitch_step) {
       }
       mroll_prev = ar;
 
-      if (ap <= (mpitch_prev + mpu_trigger_thresh) || ap >= (mpitch_prev - mpu_trigger_thresh)) {
+      if (ap <= (mpitch_prev + mpu_trigger_thresh) && ap >= (mpitch_prev - mpu_trigger_thresh)) {
         if (pitch_step < 0) { //pitch front down
           if (is_tibia(i)) {
             if (is_front_leg(i)) {
@@ -2918,11 +3053,11 @@ void set_sit() {
   targetPos[LFT] = servoLimit[LFT][0];
   activeServo[RFT] = 1;
   servoSpeed[RFT] = 10;
-  targetPos[RFT] = servoLimit[RFT][0];
+  targetPos[RFT] = servoLimit[RFT][1]; // Fixed
 
   activeServo[LRT] = 1;
   servoSpeed[LRT] = 10;
-  targetPos[LRT] = servoLimit[LRT][1];
+  targetPos[LRT] = servoLimit[LRT][0]; // Fixed
   activeServo[RRT] = 1;
   servoSpeed[RRT] = 10;
   targetPos[RRT] = servoLimit[RRT][1];
@@ -2963,14 +3098,14 @@ void set_crouch() {
   targetPos[LFT] = servoLimit[LFT][1];
   activeServo[RFT] = 1;
   servoSpeed[RFT] = 10;
-  targetPos[RFT] = servoLimit[RFT][1];
+  targetPos[RFT] = servoLimit[RFT][0]; // Fixed
 
   activeServo[LRT] = 1;
   servoSpeed[LRT] = 10;
   targetPos[LRT] = servoLimit[LRT][1];
   activeServo[RRT] = 1;
   servoSpeed[RRT] = 10;
-  targetPos[RRT] = servoLimit[RRT][1];
+  targetPos[RRT] = servoLimit[RRT][0]; // Fixed
 
   activeServo[LRF] = 1;
   servoSpeed[LRF] = 10;
@@ -4287,7 +4422,8 @@ void step_trot(int xdir, int ydir, int zdir) {
 
 void step_forward(int ydir, int xdir, int zdir) {
 
-  ydir = map(ydir, 1, y_dir_steps[1], (y_dir_steps[1] * 1.5), 5);  
+  // Scale stride proportionally with forward stick: 15 (gentle) to 30 (full)
+  ydir = map(ydir, 1, y_dir_steps[1], 15, 30);  
 
   int sc = (xdir / 3);
   int s1f = (ydir * 1.0);
@@ -4299,8 +4435,17 @@ void step_forward(int ydir, int xdir, int zdir) {
   int s3f = (ydir * 2.5);
   int s3t = (ydir * 1.5);
 
+  // Moderate RR rear forward reach so it doesn't over-reach past front leg
+  int s2f_rr = (ydir * 1.2);
+  int s3f_rr = (ydir * 1.9);
+
+  // Full forward reach for LR to maximize ground travel
+  int s2f_lr = (ydir * 1.5);
+  int s3f_lr = (ydir * 2.5);
+
   int s4f = 0;
-  int s4t = 0;
+  // Sustain stance extension during push phase so legs firmly support the body
+  int s4t = (s3t * 0.7);
 
 
   //apply zdir
@@ -4353,25 +4498,32 @@ void step_forward(int ydir, int xdir, int zdir) {
   }
 
 
+  // deadband on xdir to eliminate neutral joystick drift (+1 turning bias)
+  if (abs(xdir) <= 2) xdir = 0;
+
   //set left or right turn
-  int rfturn = (servoHome[RFC] + sc);
-  int lfturn = (servoHome[LFC] + sc);
+  int rfturn = gaitHome[RFC];
+  int lfturn = gaitHome[LFC];
 
   int rspd = 3;
   int lspd = 3;
-  if (xdir > 0) {
-    rspd = 0;
+  if (xdir > 2) {
+    rspd = 1;
     lspd = 6;
     lfturn = (gaitHome[LFC] - (sc * 3));
-  } else if (xdir < 0) {
-    lspd = 0;
+    rfturn = (gaitHome[RFC] + sc);
+  } else if (xdir < -2) {
+    lspd = 1;
     rspd = 6;
     rfturn = (gaitHome[RFC] - (sc * 3));
+    lfturn = (gaitHome[LFC] + sc);
   }
 
 
-  //RF & LR
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && !servoSequence[RF]) {
+  //RF & LR (Pair 1)
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      !servoSequence[RF] && activeGaitPair == 0) {
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (4*spd_factor), (gaitHome[RFF] - s1f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] + s1t), servoSequence[RF], 0);
@@ -4380,36 +4532,52 @@ void step_forward(int ydir, int xdir, int zdir) {
     update_sequencer(LR, LRF, (4*spd_factor), (gaitHome[LRF] + s1f), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] - s1t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 1) {
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 1) {
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s2f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] + s2t), servoSequence[RF], 0);
 
     update_sequencer(LR, LRC, (3*spd_factor), (gaitHome[LRC]), (servoSequence[LR] + 1), 0);
-    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s2f), servoSequence[LR], 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s2f_lr), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] - s2t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 2) {
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 2) {
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s3f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] - s3t), servoSequence[RF], 0);
 
     update_sequencer(LR, LRC, (3*spd_factor), (gaitHome[LRC]), (servoSequence[LR] + 1), 0);
-    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s3f), servoSequence[LR], 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s3f_lr), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] + s3t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 3) {
-    update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 0, 0);
-    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s4f), 0, 0);
-    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] - s4t), 0, 0);
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 3) {
+    update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 4, 0);
+    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s4f), 4, 0);
+    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] - s4t), 4, 0);
 
-    update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 0, 0);
-    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s4f), 0, 0);
-    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] + s4t), 0, 0);
+    update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 4, 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s4f), 4, 0);
+    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] + s4t), 4, 0);
+
+    activeGaitPair = 1; // Pair 1 has planted on ground; hand turn to Pair 2
+  }
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 4) {
+    servoSequence[RF] = 0;
+    servoSequence[LR] = 0;
   }
 
-  //LF & RR
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && !servoSequence[LF] && servoSequence[LR] == 3) {
+  //LF & RR (Pair 2)
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      !servoSequence[LF] && activeGaitPair == 1) {
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
     update_sequencer(RR, RRF, (4*spd_factor), (gaitHome[RRF] - s1f), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] + s1t), servoSequence[RR], 0);
@@ -4418,55 +4586,75 @@ void step_forward(int ydir, int xdir, int zdir) {
     update_sequencer(LF, LFF, (4*spd_factor), (gaitHome[LFF] + s1f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] - s1t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 1) {
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 1) {
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
-    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s2f), servoSequence[RR], 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s2f_rr), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] + s2t), servoSequence[RR], 0);
 
     update_sequencer(LF, LFC, (lspd*spd_factor), lfturn, (servoSequence[LF] + 1), 0);
     update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s2f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] - s2t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 2) {
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 2) {
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
-    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s3f), servoSequence[RR], 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s3f_rr), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] - s3t), servoSequence[RR], 0);
 
     update_sequencer(LF, LFC, (lspd*spd_factor), lfturn, (servoSequence[LF] + 1), 0);
     update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s3f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] + s3t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 3) {
-    update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 0, 0);
-    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s4f), 0, 0);
-    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t), 0, 0);
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 3) {
+    update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 4, 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s4f), 4, 0);
+    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t), 4, 0);
 
-    update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 0, 0);
-    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s4f), 0, 0);
-    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] + s4t), 0, 0);
+    update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 4, 0);
+    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s4f), 4, 0);
+    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] + s4t), 4, 0);
+
+    activeGaitPair = 0; // Pair 2 has planted on ground; hand turn to Pair 1
+  }
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 4) {
+    servoSequence[LF] = 0;
+    servoSequence[RR] = 0;
 
     lastMoveDelayUpdate = millis();  
   }
 
 }
 
-
 void step_backward(int ydir, int xdir, int zdir) {
 
-  ydir = map(ydir, y_dir_steps[0], -1, -5, (y_dir_steps[0] * 1.5));
+  // Map backward stick magnitude to clean positive stride: 15 (gentle) to 30 (full)
+  ydir = map(abs(ydir), 1, abs(y_dir_steps[0]), 15, 30);
 
   int sc = (xdir / 3);
-  int s1f = 15 - ydir;
-  int s1t = 35 - ydir;
 
-  int s2f = 20 - ydir;
-  int s2t = 15 - ydir;
+  // Gentle front tibia lift to avoid sudden diagonal weight shift
+  int s1t_f = (ydir * 1.0);
+  // Rear tibia lift
+  int s1t_r = (ydir * 1.5);
 
-  int s3f = 30 - ydir;
-  int s3t = 10 - ydir;
+  // Rear femur swing backward in air
+  int s2f_r = (ydir * 0.6);
+  int s3f_r = (ydir * 1.0);
 
-  int s4f = 0;
-  int s4t = 0;
+  // Tibia ground plant extension
+  int s3t = (ydir * 1.5);
+  // Sustain full tibia extension during stance push so knees do not buckle
+  int s4t = s3t;
+
+  // Front femur stance forward push against ground (propels front body backward while keeping feet in front of CoM)
+  int s4f_f = (ydir * 1.2);
 
 
   //apply zdir
@@ -4497,10 +4685,10 @@ void step_backward(int ydir, int xdir, int zdir) {
     gaitHome[RRT] += abs(tz);
     gaitHome[RRF] -= abs(fz);
     gaitHome[RRC] -= abs(cz);
-    gaitHome[LFT] -= abs(tz);
+    gaitHome[LFT] += abs(tz);
     gaitHome[LFF] += abs(fz);
     gaitHome[LFC] += abs(cz);
-    gaitHome[LRT] -= abs(tz);
+    gaitHome[LRT] += abs(tz);
     gaitHome[LRF] += abs(fz);
     gaitHome[LRC] += abs(cz);
   } else if (zdir > 1) {
@@ -4517,104 +4705,138 @@ void step_backward(int ydir, int xdir, int zdir) {
     gaitHome[LRF] -= fz;
     gaitHome[LRC] -= cz;
   }
+
+  // deadband on xdir to eliminate neutral joystick drift (+1 turning bias)
+  if (abs(xdir) <= 2) xdir = 0;
 
   int rturn = 1;
   int lturn = 1;
   int rspd = 3;
   int lspd = 3;
-  if (xdir > 0) {
-    rspd = 0;
+  if (xdir > 2) {
+    rspd = 1;
     lspd = 6;
     lturn = 3;
-  } else if (xdir < 0) {
-    lspd = 0;
+  } else if (xdir < -2) {
+    lspd = 1;
     rspd = 6;
     rturn = 3;
   }
 
-  //RF & LR
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && !servoSequence[RF]) {
+  //RF & LR (Pair 1)
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      !servoSequence[RF] && activeGaitPair == 0) {
     update_sequencer(RF, RFC, (3*spd_factor), (gaitHome[RFC]), (servoSequence[RF] + 1), 0);
-    update_sequencer(RF, RFF, (4*spd_factor), (gaitHome[RFF] - s1f), servoSequence[RF], 0);
-    update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] + s1t), servoSequence[RF], 0);
+    update_sequencer(RF, RFF, (4*spd_factor), (gaitHome[RFF] + (s4f_f * 0.5)), servoSequence[RF], 0);
+    update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] + s1t_f), servoSequence[RF], 0);
 
     update_sequencer(LR, LRC, (lspd*spd_factor), (gaitHome[LRC] + (sc * rturn)), (servoSequence[LR] + 1), 0);
-    update_sequencer(LR, LRF, (4*spd_factor), (gaitHome[LRF] + s1f), servoSequence[LR], 0);
-    update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] - s1t), servoSequence[LR], 0);
+    update_sequencer(LR, LRF, (4*spd_factor), (gaitHome[LRF]), servoSequence[LR], 0);
+    update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] - s1t_r), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 1) {
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 1) {
     update_sequencer(RF, RFC, (3*spd_factor), (gaitHome[RFC]), (servoSequence[RF] + 1), 0);
-    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s2f), servoSequence[RF], 0);
-    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] + s2t), servoSequence[RF], 0);
+    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF]), servoSequence[RF], 0);
+    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] + (s1t_f * 0.5)), servoSequence[RF], 0);
 
     update_sequencer(LR, LRC, (lspd*spd_factor), (gaitHome[LRC] + (sc * rturn)), (servoSequence[LR] + 1), 0);
-    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s2f), servoSequence[LR], 0);
-    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] - s2t), servoSequence[LR], 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] + s2f_r), servoSequence[LR], 0);
+    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] - (s1t_r * 0.5)), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 2) {
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 2) {
     update_sequencer(RF, RFC, (3*spd_factor), (gaitHome[RFC]), (servoSequence[RF] + 1), 0);
-    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s3f), servoSequence[RF], 0);
+    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF]), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] - s3t), servoSequence[RF], 0);
 
     update_sequencer(LR, LRC, (lspd*spd_factor), (gaitHome[LRC] + (sc * rturn)), (servoSequence[LR] + 1), 0);
-    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s3f), servoSequence[LR], 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] + s3f_r), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] + s3t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 3) {
-    update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 0, 0);
-    update_sequencer(RF, RFF, (10*spd_factor), (gaitHome[RFF] + s4f), 0, 0);
-    update_sequencer(RF, RFT, (15*spd_factor), (gaitHome[RFT] - s4t), 0, 0);
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 3) {
+    update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 4, 0);
+    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s4f_f), 4, 0);
+    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] - s4t), 4, 0);
 
-    update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 0, 0);
-    update_sequencer(LR, LRF, (10*spd_factor), (gaitHome[LRF] - s4f), 0, 0);
-    update_sequencer(LR, LRT, (15*spd_factor), (gaitHome[LRT] + s4t), 0, 0);
+    update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 4, 0);
+    update_sequencer(LR, LRF, (3*spd_factor), gaitHome[LRF], 4, 0);
+    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] + s4t), 4, 0);
+
+    activeGaitPair = 1; // Pair 1 has planted on ground; hand turn to Pair 2
+  }
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 4) {
+    servoSequence[RF] = 0;
+    servoSequence[LR] = 0;
   }
 
-  //LF & RR
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && !servoSequence[LF] && servoSequence[LR] == 3) {
+  //LF & RR (Pair 2)
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      !servoSequence[LF] && activeGaitPair == 1) {
     update_sequencer(RR, RRC, (rspd*spd_factor), (gaitHome[RRC] + (sc * lturn)), (servoSequence[RR] + 1), 0);
-    update_sequencer(RR, RRF, (4*spd_factor), (gaitHome[RRF] - s1f), servoSequence[RR], 0);
-    update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] + s1t), servoSequence[RR], 0);
+    update_sequencer(RR, RRF, (4*spd_factor), (gaitHome[RRF]), servoSequence[RR], 0);
+    update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] + s1t_r), servoSequence[RR], 0);
 
     update_sequencer(LF, LFC, (3*spd_factor), (gaitHome[LFC]), (servoSequence[LF] + 1), 0);
-    update_sequencer(LF, LFF, (4*spd_factor), (gaitHome[LFF] + s1f), servoSequence[LF], 0);
-    update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] - s1t), servoSequence[LF], 0);
+    update_sequencer(LF, LFF, (4*spd_factor), (gaitHome[LFF] - (s4f_f * 0.5)), servoSequence[LF], 0);
+    update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] - s1t_f), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 1) {
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 1) {
     update_sequencer(RR, RRC, (rspd*spd_factor), (gaitHome[RRC] + (sc * lturn)), (servoSequence[RR] + 1), 0);
-    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s2f), servoSequence[RR], 0);
-    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] + s2t), servoSequence[RR], 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] - s2f_r), servoSequence[RR], 0);
+    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] + (s1t_r * 0.5)), servoSequence[RR], 0);
 
     update_sequencer(LF, LFC, (3*spd_factor), (gaitHome[LFC]), (servoSequence[LF] + 1), 0);
-    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s2f), servoSequence[LF], 0);
-    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] - s2t), servoSequence[LF], 0);
+    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF]), servoSequence[LF], 0);
+    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] - (s1t_f * 0.5)), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 2) {
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 2) {
     update_sequencer(RR, RRC, (rspd*spd_factor), (gaitHome[RRC] + (sc * lturn)), (servoSequence[RR] + 1), 0);
-    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s3f), servoSequence[RR], 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] - s3f_r), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] - s3t), servoSequence[RR], 0);
 
     update_sequencer(LF, LFC, (3*spd_factor), (gaitHome[LFC]), (servoSequence[LF] + 1), 0);
-    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s3f), servoSequence[LF], 0);
+    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF]), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] + s3t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 3) {
-    update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 0, 0);
-    update_sequencer(RR, RRF, (10*spd_factor), (gaitHome[RRF] + s4f), 0, 0);
-    update_sequencer(RR, RRT, (15*spd_factor), (gaitHome[RRT] - s4t), 0, 0);
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 3) {
+    update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 4, 0);
+    update_sequencer(RR, RRF, (3*spd_factor), gaitHome[RRF], 4, 0);
+    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t), 4, 0);
 
-    update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 0, 0);
-    update_sequencer(LF, LFF, (10*spd_factor), (gaitHome[LFF] - s4f), 0, 0);
-    update_sequencer(LF, LFT, (15*spd_factor), (gaitHome[LFT] + s4t), 0, 0);
+    update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 4, 0);
+    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s4f_f), 4, 0);
+    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] + s4t), 4, 0);
+
+    activeGaitPair = 0; // Pair 2 has planted on ground; hand turn to Pair 1
+  }
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 4) {
+    servoSequence[LF] = 0;
+    servoSequence[RR] = 0;
 
     lastMoveDelayUpdate = millis();  
   }
 
 }
 
-
 void step_left_right(int lorr, int xdir, int ydir) {   //where x is +right/-left, and y is +forward/-backward
-  spd = 12;  //1-10 (scale with move steps)
+  spd = 3;   // Fast and responsive turning (was 12)
   move_steps = 30; //20-110
 
 //scale either move_steps or xdir from the other (leg should lift more when greater xdir, and vice-versa)
@@ -5557,7 +5779,54 @@ void serial_command(String cmd) {
       if (cmd == "stop" || cmd == "0") {
         if (!plotter) Serial.println(F("stop"));
         set_stop_active();
-        set_home();
+        detach_all();
+      } else if (cmd == "home") {
+        if (!plotter) Serial.println(F("home"));
+        go_home();
+        set_stay();
+      } else if (cmd == "pos") {
+        Serial.println(F("\n--- CURRENT SERVO POSITIONS ---"));
+        Serial.println(F("Servo\tHome\tCurrent\tTarget"));
+        for (int i=0; i<TOTAL_SERVOS; i++) {
+          Serial.print(i);
+          Serial.print(F("\t"));
+          Serial.print(servoHome[i]);
+          Serial.print(F("\t"));
+          Serial.print(servoPos[i]);
+          Serial.print(F("\t"));
+          Serial.println(targetPos[i]);
+        }
+        Serial.println(F("-------------------------------\n"));
+      } else if (cmd == "mpu_off") {
+        mpu_active = 0;
+        mroll = 0;
+        mpitch = 0;
+        if (!plotter) Serial.println(F("MPU Stabilization OFF"));
+      } else if (cmd == "mpu_on") {
+        mpu_active = 1;
+        if (!plotter) Serial.println(F("MPU Stabilization ON"));
+      } else if (cmd == "mpu_cal") {
+        if (!plotter) Serial.println(F("Calibrating MPU... Keep robot completely still!"));
+        calibrateMPU6050(gyroBias, accelBias);
+        EEPROM.put(101, gyroBias);
+        EEPROM.put(120, accelBias);
+        EEPROM.write(100, 0x55);
+        initMPU6050();
+        if (!plotter) {
+          Serial.println(F("  Acceleration Trim:"));
+          Serial.print(F("    x-axis : +/- ")); Serial.println(accelBias[0], 2);
+          Serial.print(F("    y-axis : +/- ")); Serial.println(accelBias[1], 2);
+          Serial.print(F("    z-axis : +/- ")); Serial.println(accelBias[2], 2);
+          Serial.println(F("  Gyration Trim:"));
+          Serial.print(F("    x-axis : +/- ")); Serial.println(gyroBias[0], 2);
+          Serial.print(F("    y-axis : +/- ")); Serial.println(gyroBias[1], 2);
+          Serial.print(F("    z-axis : +/- ")); Serial.println(gyroBias[2], 2);
+        }
+        mroll = 0; mpitch = 0; myaw = 0;
+        gyroAngleX = 0; gyroAngleY = 0; 
+        accAngleX = 0; accAngleY = 0;
+        mpu_mroll = 0; mpu_mpitch = 0; mpu_myaw = 0;
+        if (!plotter) Serial.println(F("MPU Calibrated to 0 degrees and SAVED to memory!"));
       } else if (cmd == "1") {
         if (!plotter) Serial.println(F("set speed 1"));
         spd = 1;
@@ -5777,11 +6046,6 @@ void serial_command(String cmd) {
           debug_servo++;
         }
         if (!plotter) { Serial.print("set debug servo ");Serial.println(debug_servo); }
-      } else if (cmd == "l-") {
-        if (debug_leg > 0) {
-          debug_leg--;
-        }
-        if (!plotter) { Serial.print("set debug leg ");Serial.println(debug_leg); }
       } else if (cmd == "l+") {
         if (debug_leg < (TOTAL_LEGS-1)) {
           debug_leg++;
@@ -6378,7 +6642,7 @@ void mp3_volume(int vol) {
     sound_volp = sound_vol;
 
 //    #if MP3_PLAYER_TYPE > 0
-      DFPlayer.setVol(sound_vol);
+//      DFPlayer.setVol(sound_vol);
 //    #else
 //      DFPlayer.volume(sound_vol);
 //    #endif
