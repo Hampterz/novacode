@@ -374,6 +374,7 @@ byte move_pitch_body = 0;
 byte move_trot = 0;
 byte move_forward = 0;
 byte move_backward = 0;
+byte activeGaitPair = 0;
 byte move_left = 0;
 byte move_right = 0;
 byte move_march = 0;
@@ -2694,6 +2695,7 @@ void set_stop() {
   for (int l = 0; l < TOTAL_LEGS; l++) {
     servoSequence[l] = 0;
   }
+  activeGaitPair = 0;
   set_home();
 }
 
@@ -2705,6 +2707,7 @@ void set_stop_active() {
   for (int l = 0; l < TOTAL_LEGS; l++) {
     servoSequence[l] = 0;
   }
+  activeGaitPair = 0;
   use_ramp = 0;
 
   moving = 0;
@@ -4486,25 +4489,32 @@ void step_forward(int ydir, int xdir, int zdir) {
   }
 
 
+  // deadband on xdir to eliminate neutral joystick drift (+1 turning bias)
+  if (abs(xdir) <= 2) xdir = 0;
+
   //set left or right turn
-  int rfturn = (servoHome[RFC] + sc);
-  int lfturn = (servoHome[LFC] + sc);
+  int rfturn = gaitHome[RFC];
+  int lfturn = gaitHome[LFC];
 
   int rspd = 3;
   int lspd = 3;
-  if (xdir > 0) {
-    rspd = 0;
+  if (xdir > 2) {
+    rspd = 1;
     lspd = 6;
     lfturn = (gaitHome[LFC] - (sc * 3));
-  } else if (xdir < 0) {
-    lspd = 0;
+    rfturn = (gaitHome[RFC] + sc);
+  } else if (xdir < -2) {
+    lspd = 1;
     rspd = 6;
     rfturn = (gaitHome[RFC] - (sc * 3));
+    lfturn = (gaitHome[LFC] + sc);
   }
 
 
-  //RF & LR
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && !servoSequence[RF]) {
+  //RF & LR (Pair 1)
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      !servoSequence[RF] && activeGaitPair == 0) {
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (4*spd_factor), (gaitHome[RFF] - s1f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] + s1t), servoSequence[RF], 0);
@@ -4513,7 +4523,9 @@ void step_forward(int ydir, int xdir, int zdir) {
     update_sequencer(LR, LRF, (4*spd_factor), (gaitHome[LRF] + s1f), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] - s1t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 1) {
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 1) {
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s2f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] + s2t), servoSequence[RF], 0);
@@ -4522,7 +4534,9 @@ void step_forward(int ydir, int xdir, int zdir) {
     update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s2f), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] - s2t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 2) {
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 2) {
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s3f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] - s3t), servoSequence[RF], 0);
@@ -4531,18 +4545,30 @@ void step_forward(int ydir, int xdir, int zdir) {
     update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s3f), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] + s3t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 3) {
-    update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 0, 0);
-    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s4f), 0, 0);
-    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] - s4t), 0, 0);
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 3) {
+    update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 4, 0);
+    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s4f), 4, 0);
+    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] - s4t), 4, 0);
 
-    update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 0, 0);
-    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s4f), 0, 0);
-    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] + s4t), 0, 0);
+    update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 4, 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s4f), 4, 0);
+    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] + s4t), 4, 0);
+
+    activeGaitPair = 1; // Pair 1 has planted on ground; hand turn to Pair 2
+  }
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 4) {
+    servoSequence[RF] = 0;
+    servoSequence[LR] = 0;
   }
 
-  //LF & RR
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && !servoSequence[LF] && servoSequence[LR] == 3) {
+  //LF & RR (Pair 2)
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      !servoSequence[LF] && activeGaitPair == 1) {
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
     update_sequencer(RR, RRF, (4*spd_factor), (gaitHome[RRF] - s1f), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] + s1t), servoSequence[RR], 0);
@@ -4551,7 +4577,9 @@ void step_forward(int ydir, int xdir, int zdir) {
     update_sequencer(LF, LFF, (4*spd_factor), (gaitHome[LFF] + s1f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] - s1t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 1) {
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 1) {
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
     update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s2f), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] + s2t), servoSequence[RR], 0);
@@ -4560,7 +4588,9 @@ void step_forward(int ydir, int xdir, int zdir) {
     update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s2f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] - s2t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 2) {
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 2) {
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
     update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s3f), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] - s3t), servoSequence[RR], 0);
@@ -4569,14 +4599,24 @@ void step_forward(int ydir, int xdir, int zdir) {
     update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s3f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] + s3t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 3) {
-    update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 0, 0);
-    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s4f), 0, 0);
-    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t), 0, 0);
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 3) {
+    update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 4, 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s4f), 4, 0);
+    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t), 4, 0);
 
-    update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 0, 0);
-    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s4f), 0, 0);
-    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] + s4t), 0, 0);
+    update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 4, 0);
+    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s4f), 4, 0);
+    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] + s4t), 4, 0);
+
+    activeGaitPair = 0; // Pair 2 has planted on ground; hand turn to Pair 1
+  }
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 4) {
+    servoSequence[LF] = 0;
+    servoSequence[RR] = 0;
 
     lastMoveDelayUpdate = millis();  
   }
@@ -4651,22 +4691,27 @@ void step_backward(int ydir, int xdir, int zdir) {
     gaitHome[LRC] -= cz;
   }
 
+  // deadband on xdir to eliminate neutral joystick drift (+1 turning bias)
+  if (abs(xdir) <= 2) xdir = 0;
+
   int rturn = 1;
   int lturn = 1;
   int rspd = 3;
   int lspd = 3;
-  if (xdir > 0) {
-    rspd = 0;
+  if (xdir > 2) {
+    rspd = 1;
     lspd = 6;
     lturn = 3;
-  } else if (xdir < 0) {
-    lspd = 0;
+  } else if (xdir < -2) {
+    lspd = 1;
     rspd = 6;
     rturn = 3;
   }
 
-  //RF & LR
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && !servoSequence[RF]) {
+  //RF & LR (Pair 1)
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      !servoSequence[RF] && activeGaitPair == 0) {
     update_sequencer(RF, RFC, (3*spd_factor), (gaitHome[RFC]), (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (4*spd_factor), (gaitHome[RFF] - s1f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] + s1t), servoSequence[RF], 0);
@@ -4675,7 +4720,9 @@ void step_backward(int ydir, int xdir, int zdir) {
     update_sequencer(LR, LRF, (4*spd_factor), (gaitHome[LRF] + s1f), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] - s1t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 1) {
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 1) {
     update_sequencer(RF, RFC, (3*spd_factor), (gaitHome[RFC]), (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s2f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] + s2t), servoSequence[RF], 0);
@@ -4684,7 +4731,9 @@ void step_backward(int ydir, int xdir, int zdir) {
     update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s2f), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] - s2t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 2) {
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 2) {
     update_sequencer(RF, RFC, (3*spd_factor), (gaitHome[RFC]), (servoSequence[RF] + 1), 0);
     update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s3f), servoSequence[RF], 0);
     update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] - s3t), servoSequence[RF], 0);
@@ -4693,18 +4742,30 @@ void step_backward(int ydir, int xdir, int zdir) {
     update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s3f), servoSequence[LR], 0);
     update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] + s3t), servoSequence[LR], 0);
   }
-  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] && servoSequence[RF] == 3) {
-    update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 0, 0);
-    update_sequencer(RF, RFF, (10*spd_factor), (gaitHome[RFF] + s4f), 0, 0);
-    update_sequencer(RF, RFT, (15*spd_factor), (gaitHome[RFT] - s4t), 0, 0);
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 3) {
+    update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 4, 0);
+    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + s4f), 4, 0);
+    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] - s4t), 4, 0);
 
-    update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 0, 0);
-    update_sequencer(LR, LRF, (10*spd_factor), (gaitHome[LRF] - s4f), 0, 0);
-    update_sequencer(LR, LRT, (15*spd_factor), (gaitHome[LRT] + s4t), 0, 0);
+    update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 4, 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] - s4f), 4, 0);
+    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] + s4t), 4, 0);
+
+    activeGaitPair = 1; // Pair 1 has planted on ground; hand turn to Pair 2
+  }
+  if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
+      !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
+      servoSequence[RF] == 4) {
+    servoSequence[RF] = 0;
+    servoSequence[LR] = 0;
   }
 
-  //LF & RR
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && !servoSequence[LF] && servoSequence[LR] == 3) {
+  //LF & RR (Pair 2)
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      !servoSequence[LF] && activeGaitPair == 1) {
     update_sequencer(RR, RRC, (rspd*spd_factor), (gaitHome[RRC] + (sc * lturn)), (servoSequence[RR] + 1), 0);
     update_sequencer(RR, RRF, (4*spd_factor), (gaitHome[RRF] - s1f), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] + s1t), servoSequence[RR], 0);
@@ -4713,7 +4774,9 @@ void step_backward(int ydir, int xdir, int zdir) {
     update_sequencer(LF, LFF, (4*spd_factor), (gaitHome[LFF] + s1f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] - s1t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 1) {
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 1) {
     update_sequencer(RR, RRC, (rspd*spd_factor), (gaitHome[RRC] + (sc * lturn)), (servoSequence[RR] + 1), 0);
     update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s2f), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] + s2t), servoSequence[RR], 0);
@@ -4722,7 +4785,9 @@ void step_backward(int ydir, int xdir, int zdir) {
     update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s2f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] - s2t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 2) {
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 2) {
     update_sequencer(RR, RRC, (rspd*spd_factor), (gaitHome[RRC] + (sc * lturn)), (servoSequence[RR] + 1), 0);
     update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s3f), servoSequence[RR], 0);
     update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] - s3t), servoSequence[RR], 0);
@@ -4731,14 +4796,24 @@ void step_backward(int ydir, int xdir, int zdir) {
     update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s3f), servoSequence[LF], 0);
     update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] + s3t), servoSequence[LF], 0);
   }
-  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] && servoSequence[LF] == 3) {
-    update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 0, 0);
-    update_sequencer(RR, RRF, (10*spd_factor), (gaitHome[RRF] + s4f), 0, 0);
-    update_sequencer(RR, RRT, (15*spd_factor), (gaitHome[RRT] - s4t), 0, 0);
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 3) {
+    update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 4, 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s4f), 4, 0);
+    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t), 4, 0);
 
-    update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 0, 0);
-    update_sequencer(LF, LFF, (10*spd_factor), (gaitHome[LFF] - s4f), 0, 0);
-    update_sequencer(LF, LFT, (15*spd_factor), (gaitHome[LFT] + s4t), 0, 0);
+    update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 4, 0);
+    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s4f), 4, 0);
+    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] + s4t), 4, 0);
+
+    activeGaitPair = 0; // Pair 2 has planted on ground; hand turn to Pair 1
+  }
+  if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
+      !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
+      servoSequence[LF] == 4) {
+    servoSequence[LF] = 0;
+    servoSequence[RR] = 0;
 
     lastMoveDelayUpdate = millis();  
   }
