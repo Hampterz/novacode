@@ -397,6 +397,9 @@ byte move_leg = 0;
 byte move_follow = 0;
 String move_paused = "";
 
+// Function prototypes
+void step_left_right(int lorr, int xdir, int ydir, int zdir = 0);
+
 //vars used to compensate for center of gravity / momentum / inertia
 float step_weight_factor_front = 1.00;
 float step_weight_factor_rear = 1.00;
@@ -4840,7 +4843,7 @@ void step_backward(int ydir, int xdir, int zdir) {
 
 }
 
-void step_left_right(int lorr, int xdir, int ydir, int zdir = 0) {
+void step_left_right(int lorr, int xdir, int ydir, int zdir) {
   // True Turn-In-Place Trot Gait (lorr == 1: Turn Left / CCW; lorr == 0: Turn Right / CW)
   // Uses differential diagonal-trot drive with full tibia lift for crisp, powerful rotation on the spot.
 
