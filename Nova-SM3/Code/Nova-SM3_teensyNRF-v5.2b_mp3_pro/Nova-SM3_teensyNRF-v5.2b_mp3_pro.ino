@@ -778,49 +778,26 @@ void setup() {
   digitalWrite(OE_PIN, LOW);  // LOW = outputs enabled
   delay(1000);  // give servos time to smoothly reach home positions
 
-  //init mpu6050 - MUST be done after servos are enabled so robot is standing level!
-  // Initialize regardless of mpu_active so it can be toggled remotely later
+  //init mpu6050 on Wire1 (pins 16=SCL1, 17=SDA1)
   Wire1.begin();
   Wire1.setTimeout(10); // Prevent I2C from hanging forever if slave disconnects
-    uint8_t c = readByte(MPU6050_ADDRESS, WHO_AM_I_MPU6050);  // Read WHO_AM_I register for MPU-6050
-    delay(1000); 
-  
-    if (c == 0x68) {  
-      if (debug) Serial.println(F("MPU6050 testing... "));
-      MPU6050SelfTest(SelfTest);
-      if (debug) {
-        delay(300);
-        Serial.println(F("  Acceleration Trim:"));
-        Serial.print(F("    x-axis : +/- ")); Serial.println(SelfTest[0],1);
-        Serial.print(F("    y-axis : +/- ")); Serial.println(SelfTest[1],1);
-        Serial.print(F("    z-axis : +/- ")); Serial.println(SelfTest[2],1);
-        Serial.println(F("  Gyration Trim:"));
-        Serial.print(F("    x-axis : +/- ")); Serial.println(SelfTest[3],1);
-        Serial.print(F("    y-axis : +/- ")); Serial.println(SelfTest[4],1);
-        Serial.print(F("    z-axis : +/- ")); Serial.println(SelfTest[5],1);
-      }
-      if(SelfTest[0] < 1.0f && SelfTest[1] < 1.0f && SelfTest[2] < 1.0f && SelfTest[3] < 1.0f && SelfTest[4] < 1.0f && SelfTest[5] < 1.0f) {
-        if (debug) {
-          Serial.println(F("  PASSED"));  
-          delay(1000);
-          if (debug) Serial.print(F("MPU6050 IMU intializing... "));
-        }
-        if (EEPROM.read(100) == 0x55) {
-          EEPROM.get(101, gyroBias);
-          EEPROM.get(120, accelBias);
-          if (debug) Serial.print(F("(Loaded from EEPROM) "));
-        } else {
-          calibrateMPU6050(gyroBias, accelBias); // Calibrate gyro and accelerometers, load biases in bias registers  
-        }
-        initMPU6050(); 
-        if (debug) Serial.println(F("\t\t\tOK"));
-      } else {
-        if (debug) {
-          Serial.print(F("  Error: Could not connect to MPU6050 on 0x"));
-          Serial.println(c, HEX);
-        }
-      }
+  delay(100);
+
+  uint8_t c = readByte(MPU6050_ADDRESS, WHO_AM_I_MPU6050);  // Read WHO_AM_I register for MPU-6050
+  if (c == 0x68) {  
+    if (debug) Serial.println(F("MPU6050 IMU detected on 0x68. Initializing..."));
+    calibrateMPU6050(gyroBias, accelBias); // Calibrate gyro and accelerometers, load biases in bias registers  
+    initMPU6050();                         // Wake device from sleep, set sample rate and DLPF
+    mpu_is_active = 1;
+    if (debug) Serial.println(F("MPU6050 IMU initialized OK"));
+  } else {
+    mpu_is_active = 0;
+    if (debug) {
+      Serial.print(F("MPU6050 not detected on Wire1 (WHO_AM_I returned 0x"));
+      Serial.print(c, HEX);
+      Serial.println(F(")"));
     }
+  }
   }
 
   if (!mpu_active) {
@@ -1201,16 +1178,20 @@ void remote_check() {
         // Toggle MPU
         if (mpu_active) {
           mpu_active = 0;
-          mpu_is_active = 0;
+          set_stay();
           if (debug) Serial.println(F("Remote: MPU OFF"));
         } else {
-          mpu_active = 1;
-          mpu_is_active = 1;
-          mroll = 0; mpitch = 0; myaw = 0;
-          gyroAngleX = 0; gyroAngleY = 0;
-          accAngleX = 0; accAngleY = 0;
-          mpu_mroll = 0; mpu_mpitch = 0; mpu_myaw = 0;
-          if (debug) Serial.println(F("Remote: MPU ON"));
+          if (mpu_is_active) {
+            mpu_active = 1;
+            mroll = 0.0; mpitch = 0.0; myaw = 0.0;
+            mroll_prev = 0.0; mpitch_prev = 0.0;
+            gyroAngleX = 0.0; gyroAngleY = 0.0;
+            accAngleX = 0.0; accAngleY = 0.0;
+            currentTime = millis();
+            if (debug) Serial.println(F("Remote: MPU ON"));
+          } else {
+            if (debug) Serial.println(F("Remote: MPU Hardware Not Detected"));
+          }
         }
       } else if (p2 == 3) {
         // SIT
@@ -2276,81 +2257,49 @@ void uss_check() {
 */
 void get_mpu() {
 
-  if(readByte(MPU6050_ADDRESS, INT_STATUS) & 0x01) {  // check if data ready interrupt
+  if (readByte(MPU6050_ADDRESS, INT_STATUS) & 0x01) {  // check if data ready interrupt
     readAccelData(accelCount);  // Read the x/y/z adc values
     getAres();
     
     // calculate the accleration value into actual g's
-    ax = (float)accelCount[0]*aRes - accelBias[0];  // get actual g value, this depends on scale being set
+    ax = (float)accelCount[0]*aRes - accelBias[0];
     ay = (float)accelCount[1]*aRes - accelBias[1];   
     az = (float)accelCount[2]*aRes - accelBias[2];  
 
-
     // Calculating Roll and Pitch from the accelerometer data
-    accAngleX = (atan(ay / sqrt(pow(ax, 2) + pow(az, 2))) * 180 / PI);// - SelfTest[0]; // SelfTest[0] ~(0.58) See the calculate_IMU_error()custom function for more details
-    accAngleY = (atan(-1 * ax / sqrt(pow(ay, 2) + pow(az, 2))) * 180 / PI);// - SelfTest[1]; // SelfTest[1] ~(-1.58)
+    accAngleX = (atan(ay / sqrt(pow(ax, 2) + pow(az, 2))) * 180.0 / PI);
+    accAngleY = (atan(-1.0 * ax / sqrt(pow(ay, 2) + pow(az, 2))) * 180.0 / PI);
    
     readGyroData(gyroCount);  // Read the x/y/z adc values
     getGres();
  
     // calculate the gyro value into actual degrees per second
-    gx = (float)gyroCount[0]*gRes - gyroBias[0];  // get actual gyro value, this depends on scale being set
+    gx = (float)gyroCount[0]*gRes - gyroBias[0];
     gy = (float)gyroCount[1]*gRes - gyroBias[1];  
     gz = (float)gyroCount[2]*gRes - gyroBias[2];   
-  
-    // Correct the outputs with the calculated error values
-//    gx = gx + abs(SelfTest[3]); // SelfTest[3] ~(-0.56)
-//    gy = gy + abs(SelfTest[4]); // SelfTest[4] ~(2)
-//    gz = gz + abs(SelfTest[5]); // SelfTest[5] ~ (-0.8)
 
-    // Currently the raw values are in degrees per seconds, deg/s, so we need to multiply by seconds (s) to get the angle in degrees
-    previousTime = currentTime;        // Previous time is stored before the actual time read
-    currentTime = millis();            // Current time actual time read
-    elapsedTime = (float)(currentTime - previousTime) / 1000.0; // Divide by 1000.0 to get seconds correctly
-    gyroAngleX = gyroAngleX + gx * (elapsedTime/2); // deg/s * s = deg
-    gyroAngleY = gyroAngleY + gy * (elapsedTime/2);
-    myaw = (myaw + gz * (elapsedTime/2));
+    previousTime = currentTime;
+    currentTime = millis();
+    elapsedTime = (float)(currentTime - previousTime) / 1000.0;
+    if (elapsedTime <= 0.0 || elapsedTime > 0.1) elapsedTime = 0.01;
 
-    // Complementary filter - combine acceleromter and gyro angle values
-    mroll = (0.97 * gyroAngleX + 0.03 * accAngleX);
-    mpitch = (0.97 * gyroAngleY + 0.03 * accAngleY);
-    
-    // Apply a deadband to eliminate micro-adjustments and twitching when standing still
-    if (abs(mroll) < 2.0) mroll = 0.0;
-    if (abs(mpitch) < 2.0) mpitch = 0.0;
+    // Complementary filter - combine accelerometer and gyro angle values
+    mroll = (0.97 * (mroll + gx * elapsedTime) + 0.03 * accAngleX);
+    mpitch = (0.97 * (mpitch + gy * elapsedTime) + 0.03 * accAngleY);
+    myaw = (myaw + gz * elapsedTime);
   }  
 
   if (!plotter && debug5) {
-//    Serial.print("mpu x / y / z:\t\t"); Serial.print(mroll); Serial.print("\t/\t"); Serial.print(mpitch); Serial.print("\t/\t"); Serial.println(myaw);
-    Serial.print("mpu x / y:\t\t"); Serial.print(mroll); Serial.print("\t/\t"); Serial.println(mpitch);
+    Serial.print(F("mpu roll/pitch:\t")); Serial.print(mroll); Serial.print(F("\t/\t")); Serial.println(mpitch);
   } else if (plotter && debug5) {
-//    Serial.print("x:"); Serial.print(mroll); Serial.print("\ty:"); Serial.print(mpitch); Serial.print("\tz:"); Serial.println(myaw);
-    Serial.print("roll:"); Serial.print(mroll); Serial.print("\tpitch:"); Serial.println(mpitch);
+    Serial.print(F("roll:")); Serial.print(mroll); Serial.print(F("\tpitch:")); Serial.println(mpitch);
   }
-    
-  //on init mpu, save offsets as defaults for resetting MPU position
-  if (mpuInterval != mpuInterval_prev){
-    mpuInterval = mpuInterval_prev;
-    mpu_mroll = mroll;
-    mpu_mpitch = mpitch;
-    mpu_myaw = myaw;
 
-    //delay before starting set_axis first time
-    delay(1000);
-    if (!plotter && debug) {
-      Serial.println(F("\nNova SM3... \t\t\t\tReady!"));
-      Serial.println(F("=============================================="));
-    
-      delay(500);
-      if (!plotter && serial_active) {
-        Serial.println();
-        Serial.println(F("Type a command input or 'h' for help:"));
-      }
+  // Only apply stance leveling when robot is NOT actively executing walking gaits
+  if (!move_forward && !move_backward && !move_left && !move_right && !move_trot && !move_march && !move_sequence) {
+    if (!plotter) {
+      set_axis(mroll, mpitch);
     }
-  }
-
-  if (!plotter) {
-    set_axis(mroll, mpitch);
   }
 
   lastMPUUpdate = millis();
@@ -2771,74 +2720,98 @@ void set_speed() {
    Move Functions
    -------------------------------------------------------
 */
-//set pitch and roll axis from mpu data
+//set pitch and roll axis from mpu data to dynamically level robot in stay/standing mode
 void set_axis(float roll_step, float pitch_step) {
-    float ar = abs(roll_step);
-    float ap = abs(pitch_step);
+  // Ignore tiny movements (< 1.5 deg) so servos don't twitch at rest
+  if (abs(roll_step) < 1.5) roll_step = 0.0;
+  if (abs(pitch_step) < 1.5) pitch_step = 0.0;
 
-    for (int i = 0; i < TOTAL_SERVOS; i++) {
-      byte skip = 0;
-      float t = 0.0;
-      float f = 0.0;
-      if (is_tibia(i)) {
-        t = servoHome[i];
-      } else if (is_femur(i)) {
-        f = servoHome[i];
-      }
+  // Clamp max correction to prevent over-driving servos
+  roll_step = constrain(roll_step, -25.0, 25.0);
+  pitch_step = constrain(pitch_step, -25.0, 25.0);
 
-      if (ar <= (mroll_prev + mpu_trigger_thresh) && ar >= (mroll_prev - mpu_trigger_thresh)) {
-        if (roll_step < 0) { //roll left
-          if (is_tibia(i)) {
-            t -= ((abs(roll_step) * 0.65) * 4);
-          } else if (is_femur(i)) {
-            f += ((abs(roll_step) * 0.4) * 4);
-          }
-        } else { //roll right
-          if (is_tibia(i)) {
-            t += ((roll_step * 0.65) * 4);
-          } else if (is_femur(i)) {
-            f -= ((roll_step * 0.4) * 4);
-          }
+  // If level, smoothly return to home if previously tilted
+  if (roll_step == 0.0 && pitch_step == 0.0) {
+    if (mroll_prev != 0.0 || mpitch_prev != 0.0) {
+      mroll_prev = 0.0;
+      mpitch_prev = 0.0;
+      for (int i = 0; i < TOTAL_SERVOS; i++) {
+        if (is_tibia(i) || is_femur(i)) {
+          activeServo[i] = 1;
+          servoSpeed[i] = (6 * spd_factor);
+          targetPos[i] = servoHome[i];
         }
-      } else {
-        skip = 1;
       }
-      mroll_prev = ar;
+    }
+    return;
+  }
 
-      if (ap <= (mpitch_prev + mpu_trigger_thresh) && ap >= (mpitch_prev - mpu_trigger_thresh)) {
-        if (pitch_step < 0) { //pitch front down
-          if (is_tibia(i)) {
-            if (is_front_leg(i)) {
-              (is_left_leg(i)) ? t -= ((abs(pitch_step) * 1.15) * 3) : t += ((abs(pitch_step) * 1.15) * 3);
-            } else {
-              (is_left_leg(i)) ? t += ((abs(pitch_step) * 1.15) * 3) : t -= ((abs(pitch_step) * 1.15) * 3);
-            }
-          }
-        } else { //pitch front up
-          if (is_tibia(i)) {
-            if (is_front_leg(i)) {
-              (is_left_leg(i)) ? t += ((abs(pitch_step) * 1.15) * 3) : t -= ((abs(pitch_step) * 1.15) * 3);
-            } else {
-              (is_left_leg(i)) ? t -= ((abs(pitch_step) * 1.15) * 3) : t += ((abs(pitch_step) * 1.15) * 3);
-            }
-          }
-        }
-        mpitch_prev = pitch_step;
-      }
-      
-      if (!skip) {
+  // If change from previous update is very small (< 0.5 deg), avoid redundant servo writes
+  if (abs(roll_step - mroll_prev) < 0.5 && abs(pitch_step - mpitch_prev) < 0.5) {
+    return;
+  }
+  mroll_prev = roll_step;
+  mpitch_prev = pitch_step;
+
+  for (int i = 0; i < TOTAL_SERVOS; i++) {
+    float t = 0.0;
+    float f = 0.0;
+    if (is_tibia(i)) {
+      t = servoHome[i];
+    } else if (is_femur(i)) {
+      f = servoHome[i];
+    } else {
+      continue; // Skip coaxes
+    }
+
+    // Roll correction
+    if (roll_step != 0.0) {
+      if (roll_step < 0) { // Roll left -> left side needs to extend, right side retract
         if (is_tibia(i)) {
-          activeServo[i] = 1;
-          servoSpeed[i] = (7*spd_factor);
-          targetPos[i] = limit_target(i, t, 0);
+          t -= ((abs(roll_step) * 0.65) * 4);
         } else if (is_femur(i)) {
-          activeServo[i] = 1;
-          servoSpeed[i] = (12*spd_factor);
-          targetPos[i] = limit_target(i, f, 0);
+          f += ((abs(roll_step) * 0.4) * 4);
+        }
+      } else { // Roll right -> right side needs to extend, left side retract
+        if (is_tibia(i)) {
+          t += ((roll_step * 0.65) * 4);
+        } else if (is_femur(i)) {
+          f -= ((roll_step * 0.4) * 4);
         }
       }
     }
 
+    // Pitch correction
+    if (pitch_step != 0.0) {
+      if (pitch_step < 0) { // Pitch front down -> front legs extend, rear legs retract
+        if (is_tibia(i)) {
+          if (is_front_leg(i)) {
+            (is_left_leg(i)) ? t -= ((abs(pitch_step) * 1.15) * 3) : t += ((abs(pitch_step) * 1.15) * 3);
+          } else {
+            (is_left_leg(i)) ? t += ((abs(pitch_step) * 1.15) * 3) : t -= ((abs(pitch_step) * 1.15) * 3);
+          }
+        }
+      } else { // Pitch front up -> front legs retract, rear legs extend
+        if (is_tibia(i)) {
+          if (is_front_leg(i)) {
+            (is_left_leg(i)) ? t += ((abs(pitch_step) * 1.15) * 3) : t -= ((abs(pitch_step) * 1.15) * 3);
+          } else {
+            (is_left_leg(i)) ? t -= ((abs(pitch_step) * 1.15) * 3) : t += ((abs(pitch_step) * 1.15) * 3);
+          }
+        }
+      }
+    }
+
+    if (is_tibia(i)) {
+      activeServo[i] = 1;
+      servoSpeed[i] = (7 * spd_factor);
+      targetPos[i] = limit_target(i, t, 0);
+    } else if (is_femur(i)) {
+      activeServo[i] = 1;
+      servoSpeed[i] = (12 * spd_factor);
+      targetPos[i] = limit_target(i, f, 0);
+    }
+  }
 }
 
 
@@ -5840,12 +5813,19 @@ void serial_command(String cmd) {
         Serial.println(F("-------------------------------\n"));
       } else if (cmd == "mpu_off") {
         mpu_active = 0;
-        mroll = 0;
-        mpitch = 0;
+        mroll = 0.0;
+        mpitch = 0.0;
+        set_stay();
         if (!plotter) Serial.println(F("MPU Stabilization OFF"));
       } else if (cmd == "mpu_on") {
-        mpu_active = 1;
-        if (!plotter) Serial.println(F("MPU Stabilization ON"));
+        if (mpu_is_active) {
+          mpu_active = 1;
+          mroll = 0.0; mpitch = 0.0; myaw = 0.0;
+          mroll_prev = 0.0; mpitch_prev = 0.0;
+          if (!plotter) Serial.println(F("MPU Stabilization ON"));
+        } else {
+          if (!plotter) Serial.println(F("MPU Hardware Not Detected"));
+        }
       } else if (cmd == "mpu_cal") {
         if (!plotter) Serial.println(F("Calibrating MPU... Keep robot completely still!"));
         calibrateMPU6050(gyroBias, accelBias);
@@ -6251,13 +6231,16 @@ void serial_command(String cmd) {
           move_look_left = 1;
       } else if (cmd == "mpu") {
         if (mpu_active) {
-          if (!plotter) Serial.println(F("mpu off"));
           mpu_active = 0;
+          set_stay();
+          if (!plotter) Serial.println(F("mpu off"));
         } else if(mpu_is_active) {
-          if (!plotter) Serial.println(F("mpu on"));
           mpu_active = 1;
+          mroll = 0.0; mpitch = 0.0; myaw = 0.0;
+          mroll_prev = 0.0; mpitch_prev = 0.0;
+          if (!plotter) Serial.println(F("mpu on"));
         } else {
-          if (!plotter) Serial.println(F("mpu inactive"));
+          if (!plotter) Serial.println(F("mpu not detected"));
         }
       } else if (cmd == "uss") {
         if (uss_active) {

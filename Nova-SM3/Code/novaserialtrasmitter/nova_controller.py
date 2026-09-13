@@ -507,6 +507,22 @@ class NovaController:
                  fg="#ffb703", bg="#1a1a2e").pack(side='left', padx=(0, 10))
         for sname, sval in [("Slow", 6), ("Med", 4), ("Fast", 2), ("Turbo", 1)]:
             tk.Button(speed_frame, text=sname, command=lambda v=sval: self.set_speed(v), **btn_style).pack(side='left', padx=2)
+
+        # --- Quick Actions toolbar (including MPU Auto-Level toggle) ---
+        action_frame = tk.Frame(self.master, bg="#1a1a2e", pady=4)
+        action_frame.pack(fill='x', padx=30)
+        tk.Label(action_frame, text="Quick:", font=("Consolas", 9, "bold"),
+                 fg="#00ff41", bg="#1a1a2e").pack(side='left', padx=(0, 10))
+
+        self.mpu_btn = tk.Button(action_frame, text="MPU: OFF", command=lambda: self._handle_oneshot('m'),
+                                 bg="#3a3a4a", fg="#a0a0a0", activebackground="#4e4e63", activeforeground="white",
+                                 font=("Consolas", 9, "bold"), relief="flat", padx=10, pady=3)
+        self.mpu_btn.pack(side='left', padx=3)
+
+        tk.Button(action_frame, text="Home (H)", command=lambda: self._handle_oneshot('h'), **btn_style).pack(side='left', padx=3)
+        tk.Button(action_frame, text="Start/Stop (Q)", command=lambda: self._handle_oneshot('q'), **btn_style).pack(side='left', padx=3)
+        tk.Button(action_frame, text="Sit (X)", command=lambda: self._handle_oneshot('x'), **btn_style).pack(side='left', padx=3)
+        tk.Button(action_frame, text="Lay (C)", command=lambda: self._handle_oneshot('c'), **btn_style).pack(side='left', padx=3)
         
         # --- Status display ---
         self.mode_var = tk.StringVar(value="Mode: --  |  MPU: --")
@@ -565,6 +581,14 @@ class NovaController:
             # Update labels to show OFF
             self.radar.canvas.itemconfig(self.radar.left_label_id, text="L  --cm", fill="#00aa22")
             self.radar.canvas.itemconfig(self.radar.right_label_id, text="R  --cm", fill="#00aa22")
+
+    def update_mpu_ui(self, mpu_state):
+        """Update MPU button text and styling based on live robot telemetry."""
+        if hasattr(self, 'mpu_btn') and self.mpu_btn:
+            if mpu_state:
+                self.mpu_btn.config(text="MPU: ON (Auto-Level)", bg="#2a9d8f", fg="white", activebackground="#21867a")
+            else:
+                self.mpu_btn.config(text="MPU: OFF", bg="#3a3a4a", fg="#a0a0a0", activebackground="#4e4e63")
 
     def set_speed(self, spd_val):
         self.speed_val = spd_val
@@ -798,6 +822,7 @@ class NovaController:
                 else:
                     robot_status = "✓ ROBOT ONLINE"
                 self.mode_var.set(f"Mode: {mode_name} ({started})  |  MPU: {mpu_str}  |  {robot_status}")
+                self.master.after_idle(self.update_mpu_ui, self.robot_mpu)
             except:
                 pass
                     
@@ -876,6 +901,10 @@ class NovaController:
                                 self.uss_left = new_uss_l
                                 self.uss_right = new_uss_r
                                 self.last_ack_time = time.time()
+                                try:
+                                    self.master.after_idle(self.update_mpu_ui, new_mpu)
+                                except:
+                                    pass
 
                                 # Sync local mode from robot ACK for accurate display
                                 if new_mode > 0 and new_mode <= 5:
