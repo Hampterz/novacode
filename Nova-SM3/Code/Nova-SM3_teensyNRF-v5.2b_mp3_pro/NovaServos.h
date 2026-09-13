@@ -92,9 +92,9 @@ int servoLeg[TOTAL_LEGS][3] = {           //coxa, femu, tibia
 
 //sets home position of servos
 float servoHome[TOTAL_SERVOS] = {         //home pos
-  390, 280, 560,                          //RFx (leveled RFT 580->560)
+  390, 290, 580,                          //RFx (RFC=390, RFF=290, RFT=580)
   390, 510, 250,                          //LFx
-  420, 225, 550,                          //RRx (RRC 450->420, RRF 210->225, RRT 570->550)
+  420, 210, 560,                          //RRx (RRC=420, RRF=210, RRT=560)
   400, 540, 250,                          //LRx
 };
 

@@ -2,7 +2,7 @@
  * 
  *   NovaSM3 - a Spot-Mini Micro clone
  *   Version: 5.2b
- *   Version Date: 2026-09-12 (good forward & backward walk confirmed; turn in place implemented)
+ *   Version Date: 2026-09-13 (turn-in-place semi-success: right turn good, left turn pivots/strains RF; updated home calibration)
  *   
  *   Author:  Chris Locke - cguweb@gmail.com
  *   Nova's website:  https://novaspotmicro.com
