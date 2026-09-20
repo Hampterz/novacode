@@ -1308,7 +1308,6 @@ Serial.println(sel2p);
               if (debug1)
                 Serial.println(F("stop march"));
               move_march = 0;
-              if (mpu_is_active) mpu_active = 1;
               set_stop();
               y_dir = 0;
               x_dir = 0;
@@ -1330,7 +1329,6 @@ Serial.println(sel2p);
               if (mp3_active) {
                 mp3_play(24);
               }
-              if (mpu_is_active) mpu_active = 1;
               if (uss_is_active) uss_active = 1;
             }
           }
@@ -1432,7 +1430,6 @@ Serial.println(sel2p);
               Serial.println(F("stop backward"));
           }
           if (move_march) {
-            if (mpu_is_active) mpu_active = 1;
             move_march = 0;
             if (rgb_active) {
               rgb_request((char*)"OtEn");
@@ -2623,14 +2620,17 @@ void fast_home_carpet() {
 
   // Order: RF -> LR -> LF -> RR (diagonal alternation gives rock-solid wide tripod on every step)
   int leg_order[TOTAL_LEGS] = {RF, LR, LF, RR};
-  int lift_t = 45;
-  int lift_f = 15;
+  int lift_t = 100;       // High tibia retraction (~2.5 inches above carpet)
+  int lift_f_front = 45;  // Front thigh elevation
+  int lift_f_rear  = 35;  // Rear thigh elevation
 
   for (int l = 0; l < TOTAL_LEGS; l++) {
     int leg = leg_order[l];
     int c_servo = servoLeg[leg][0];
     int f_servo = servoLeg[leg][1];
     int t_servo = servoLeg[leg][2];
+
+    int lift_f = (leg == RF || leg == LF) ? lift_f_front : lift_f_rear;
 
     float lifted_tibia = servoHome[t_servo];
     float lifted_femur = servoHome[f_servo];
@@ -2643,19 +2643,31 @@ void fast_home_carpet() {
       lifted_femur += lift_f;  // left femur lifts upward (+PWM)
     }
 
-    // Phase 1: Slightly lift foot off carpet so it has zero surface contact
+    // Safety clamp within servo hardware limits
+    float min_t = min(servoLimit[t_servo][0], servoLimit[t_servo][1]);
+    float max_t = max(servoLimit[t_servo][0], servoLimit[t_servo][1]);
+    lifted_tibia = constrain(lifted_tibia, min_t, max_t);
+
+    float min_f = min(servoLimit[f_servo][0], servoLimit[f_servo][1]);
+    float max_f = max(servoLimit[f_servo][0], servoLimit[f_servo][1]);
+    lifted_femur = constrain(lifted_femur, min_f, max_f);
+
+    // Phase 1: Deliberately and smoothly lift foot high off the carpet
     pwm1.setPWM(servoSetup[t_servo][1], 0, (int)lifted_tibia);
     pwm1.setPWM(servoSetup[f_servo][1], 0, (int)lifted_femur);
-    delay(50);
+    delay(250);
 
-    // Phase 2: In the air with no carpet friction, align coax and femur to exact servoHome
+    // Phase 2: In the air with zero carpet friction, physically move Coax and Femur to exact servoHome
     pwm1.setPWM(servoSetup[c_servo][1], 0, (int)servoHome[c_servo]);
     pwm1.setPWM(servoSetup[f_servo][1], 0, (int)servoHome[f_servo]);
-    delay(50);
+    delay(280);
 
-    // Phase 3: Plant tibia cleanly down to servoHome on carpet
+    // Phase 3: Plant tibia cleanly straight down to servoHome on carpet
     pwm1.setPWM(servoSetup[t_servo][1], 0, (int)servoHome[t_servo]);
-    delay(50);
+    delay(250);
+
+    // Settling pause before next leg lifts
+    delay(100);
 
     // Update tracked positions
     servoPos[c_servo] = servoHome[c_servo];
@@ -2750,8 +2762,6 @@ void set_stop_active() {
   move_servo = 0;
   move_leg = 0;
   move_follow = 0;
-
-  if (mpu_is_active) mpu_active = 1;
 }
 
 void set_speed() {
@@ -4681,16 +4691,16 @@ void step_backward(int ydir, int xdir, int zdir) {
   int s3f = (ydir * 2.5);
   int s3t = (ydir * 1.5);
 
-  // Moderate RR rear forward reach so it doesn't over-reach past front leg
-  int s2f_rr = (ydir * 1.2);
-  int s3f_rr = (ydir * 1.9);
+  // Equal reach and full ground drive for both rear legs to prevent turning bias
+  int s2f_rr = (ydir * 1.5);
+  int s3f_rr = (ydir * 2.5);
 
-  // Full forward reach for LR to maximize ground travel
   int s2f_lr = (ydir * 1.5);
   int s3f_lr = (ydir * 2.5);
 
   // Sustain stance extension during push phase so legs firmly support the body
   int s4t = (s3t * 0.7);
+  int s4t_rr = (s3t * 0.85); // Firmer stance extension on RR to prevent right rear sag/tilt
 
 
   //apply zdir
@@ -4861,7 +4871,7 @@ void step_backward(int ydir, int xdir, int zdir) {
       servoSequence[LF] == 3) {
     update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 4, 0);
     update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] + s3f_rr), 4, 0);
-    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t), 4, 0);
+    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t_rr), 4, 0);
 
     update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 4, 0);
     update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - s3f), 4, 0);
@@ -5958,7 +5968,6 @@ void serial_command(String cmd) {
           mp3_play(24);
           delay(1500);
         }
-        if (mpu_is_active) mpu_active = 1;
         if (uss_is_active) uss_active = 1;
       } else if (cmd == "fon") {
         if (!plotter) { Serial.println("debug pir follow on"); }
