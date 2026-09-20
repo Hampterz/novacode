@@ -2613,24 +2613,30 @@ void go_home() {
   }
 }
 
-// Fast sequential carpet relief homing: lifts each leg 1-at-a-time, aligns in the air, and plants cleanly
+// Fast sequential carpet relief homing: centers all legs on ground first, then crisp low-lift tap relieves carpet friction
 void fast_home_carpet() {
   set_stop_active();
   set_stop();
 
-  // Order: RF -> LR -> LF -> RR (diagonal alternation gives rock-solid wide tripod on every step)
+  // Phase 0: Gently command all 4 legs to home on the ground first so the body is fully supported & centered
+  for (int i = 0; i < TOTAL_SERVOS; i++) {
+    if (servoSetup[i][0] == 1) {
+      pwm1.setPWM(servoSetup[i][1], 0, (int)servoHome[i]);
+    }
+  }
+  delay(120);
+
+  // Phase 1-3: Fast, low-clearance carpet tap (RF -> LR -> LF -> RR)
+  // Low lift (~8mm) and quick ~120ms timing prevent any corner tipping while freeing carpet pile tension
   int leg_order[TOTAL_LEGS] = {RF, LR, LF, RR};
-  int lift_t = 100;       // High tibia retraction (~2.5 inches above carpet)
-  int lift_f_front = 45;  // Front thigh elevation
-  int lift_f_rear  = 35;  // Rear thigh elevation
+  int lift_t = 35;  // Low, crisp ~8mm lift to unhook carpet pile without losing balance
+  int lift_f = 10;  // Gentle thigh clearance
 
   for (int l = 0; l < TOTAL_LEGS; l++) {
     int leg = leg_order[l];
     int c_servo = servoLeg[leg][0];
     int f_servo = servoLeg[leg][1];
     int t_servo = servoLeg[leg][2];
-
-    int lift_f = (leg == RF || leg == LF) ? lift_f_front : lift_f_rear;
 
     float lifted_tibia = servoHome[t_servo];
     float lifted_femur = servoHome[f_servo];
@@ -2652,22 +2658,19 @@ void fast_home_carpet() {
     float max_f = max(servoLimit[f_servo][0], servoLimit[f_servo][1]);
     lifted_femur = constrain(lifted_femur, min_f, max_f);
 
-    // Phase 1: Deliberately and smoothly lift foot high off the carpet
+    // Fast Step 1: Quick unweight/tap off the carpet
     pwm1.setPWM(servoSetup[t_servo][1], 0, (int)lifted_tibia);
     pwm1.setPWM(servoSetup[f_servo][1], 0, (int)lifted_femur);
-    delay(250);
+    delay(35);
 
-    // Phase 2: In the air with zero carpet friction, physically move Coax and Femur to exact servoHome
+    // Fast Step 2: Snap coax and femur to exact servoHome with zero carpet resistance
     pwm1.setPWM(servoSetup[c_servo][1], 0, (int)servoHome[c_servo]);
     pwm1.setPWM(servoSetup[f_servo][1], 0, (int)servoHome[f_servo]);
-    delay(280);
+    delay(45);
 
-    // Phase 3: Plant tibia cleanly straight down to servoHome on carpet
+    // Fast Step 3: Plant tibia cleanly straight down to carpet
     pwm1.setPWM(servoSetup[t_servo][1], 0, (int)servoHome[t_servo]);
-    delay(250);
-
-    // Settling pause before next leg lifts
-    delay(100);
+    delay(40);
 
     // Update tracked positions
     servoPos[c_servo] = servoHome[c_servo];
