@@ -4688,37 +4688,27 @@ void step_forward(int ydir, int xdir, int zdir) {
 
 void step_backward(int ydir, int xdir, int zdir) {
 
-  // Scale stride proportionally with backward stick: 15 (gentle) to 30 (full) - identical to forward walk
-  ydir = map(abs(ydir), 1, abs(y_dir_steps[0]), 15, 30);
+  // Symmetrical, cantilevered backward walking gait:
+  // Front legs stay strictly at or forward of Home (RFF >= 290, LFF <= 510) to support front-heavy center of mass
+  // Front stance drives from Home forward to Home + stride (propelling chest backward while bracing body)
+  // Rear stance drives from Home - stride forward to Home (propelling pelvis backward safely within hardware limits)
+  // Low-profile tibia lift ensures clean carpet clearance without pelvic drop or diagonal tipping.
+
+  // Stride scaling with backward stick: 18 (gentle) to 25 (full)
+  int stride_f = map(abs(ydir), 1, abs(y_dir_steps[0]), 18, 25);
+  int stride_r = stride_f; // 1:1 front-rear stride synchronization
 
   int sc = (xdir / 3);
 
-  // Femur lift preparation
-  int s1f = (ydir * 0.6);
+  // Smooth air-swing intermediate femur position
+  int half_stride_f = (stride_f / 2);
+  int half_stride_r = (stride_r / 2);
 
-  // Tibia lifts:
-  // Front legs need clearance over carpet
-  int s1t_f = (ydir * 1.8);  // 27 to 54 units
-  // Rear legs must NOT over-lift (lifting too high causes pelvic drop and roll onto opposite rear leg)
-  int s1t_r = (ydir * 1.3);  // 19.5 to 39 units
-
-  // Air swing intermediate clearance
-  int s2t_f = (ydir * 0.9);  // 13.5 to 27 units
-  int s2t_r = (ydir * 0.6);  // 9 to 18 units
-
-  // Ground plant tibia extension
-  int s3t = (ydir * 1.3);    // 19.5 to 39 units
-  // Stance phase ground pressure (sustained support while pushing forward)
-  int s4t = (s3t * 0.7);     // 13.6 to 27.3 units
-
-  // Backward femur reach:
-  // Front legs have extensive backward travel (RFF min 200, LFF max 590: ~80-90 units available)
-  int s2f_f = (ydir * 1.4);  // 21 to 42 units
-  int s3f_f = (ydir * 2.0);  // 30 to 60 units
-
-  // Rear legs have limited backward travel (RRF min 170, LRF max 580: strictly 40 units available)
-  int s2f_r = (ydir * 0.7);  // 10.5 to 21 units
-  int s3f_r = (ydir * 1.1);  // 16.5 to 33 units (max 33 units keeps RRF >= 177, LRF <= 573; strictly within safety limits)
+  // Low tibia lift: ~18mm above carpet (eliminates diagonal pelvic sag & tipping)
+  int lift_t   = map(abs(ydir), 1, abs(y_dir_steps[0]), 24, 30);
+  int air_t    = (lift_t / 2);
+  int plant_t  = map(abs(ydir), 1, abs(y_dir_steps[0]), 22, 28);
+  int stance_t = (plant_t * 0.75); // Sustained ground contact during push
 
   //apply zdir
   //define move z-factors
@@ -4791,48 +4781,52 @@ void step_backward(int ydir, int xdir, int zdir) {
   if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
       !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
       !servoSequence[RF] && activeGaitPair == 0) {
+    // Step 0: Lift foot cleanly off carpet
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
-    update_sequencer(RF, RFF, (4*spd_factor), (gaitHome[RFF] + s1f), servoSequence[RF], 0);
-    update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] + s1t_f), servoSequence[RF], 0);
+    update_sequencer(RF, RFF, (4*spd_factor), (gaitHome[RFF] + half_stride_f), servoSequence[RF], 0);
+    update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] + lift_t), servoSequence[RF], 0);
 
     update_sequencer(LR, LRC, (3*spd_factor), (gaitHome[LRC]), (servoSequence[LR] + 1), 0);
-    update_sequencer(LR, LRF, (4*spd_factor), (gaitHome[LRF] - s1f), servoSequence[LR], 0);
-    update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] - s1t_r), servoSequence[LR], 0);
+    update_sequencer(LR, LRF, (4*spd_factor), (gaitHome[LRF] + half_stride_r), servoSequence[LR], 0);
+    update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] - lift_t), servoSequence[LR], 0);
   }
   if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
       !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
       servoSequence[RF] == 1) {
+    // Step 1: Swing in air to placement point (RF to Home, LR to Home + stride_r)
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
-    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] - s2f_f), servoSequence[RF], 0);
-    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] + s2t_f), servoSequence[RF], 0);
+    update_sequencer(RF, RFF, (3*spd_factor), gaitHome[RFF], servoSequence[RF], 0);
+    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] + air_t), servoSequence[RF], 0);
 
     update_sequencer(LR, LRC, (3*spd_factor), (gaitHome[LRC]), (servoSequence[LR] + 1), 0);
-    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] + s2f_r), servoSequence[LR], 0);
-    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] - s2t_r), servoSequence[LR], 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] + stride_r), servoSequence[LR], 0);
+    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] - air_t), servoSequence[LR], 0);
   }
   if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
       !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
       servoSequence[RF] == 2) {
+    // Step 2: Plant feet firmly on carpet
     update_sequencer(RF, RFC, (rspd*spd_factor), rfturn, (servoSequence[RF] + 1), 0);
-    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] - s3f_f), servoSequence[RF], 0);
-    update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] - s3t), servoSequence[RF], 0);
+    update_sequencer(RF, RFF, (3*spd_factor), gaitHome[RFF], servoSequence[RF], 0);
+    update_sequencer(RF, RFT, (3*spd_factor), (gaitHome[RFT] - plant_t), servoSequence[RF], 0);
 
     update_sequencer(LR, LRC, (3*spd_factor), (gaitHome[LRC]), (servoSequence[LR] + 1), 0);
-    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] + s3f_r), servoSequence[LR], 0);
-    update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] + s3t), servoSequence[LR], 0);
+    update_sequencer(LR, LRF, (3*spd_factor), (gaitHome[LRF] + stride_r), servoSequence[LR], 0);
+    update_sequencer(LR, LRT, (3*spd_factor), (gaitHome[LRT] + plant_t), servoSequence[LR], 0);
   }
   if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
       !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
       servoSequence[RF] == 3) {
+    // Step 3: Stance drive - feet push forward on carpet, propelling body backward!
     update_sequencer(RF, RFC, (3*spd_factor), gaitHome[RFC], 4, 0);
-    update_sequencer(RF, RFF, (3*spd_factor), gaitHome[RFF], 4, 0);
-    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] - s4t), 4, 0);
+    update_sequencer(RF, RFF, (3*spd_factor), (gaitHome[RFF] + stride_f), 4, 0);
+    update_sequencer(RF, RFT, (6*spd_factor), (gaitHome[RFT] - stance_t), 4, 0);
 
     update_sequencer(LR, LRC, (3*spd_factor), gaitHome[LRC], 4, 0);
     update_sequencer(LR, LRF, (3*spd_factor), gaitHome[LRF], 4, 0);
-    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] + s4t), 4, 0);
+    update_sequencer(LR, LRT, (6*spd_factor), (gaitHome[LRT] + stance_t), 4, 0);
 
-    activeGaitPair = 1; // Pair 1 has planted on ground; hand turn to Pair 2
+    activeGaitPair = 1; // Pair 1 is planted on ground; hand turn to Pair 2
   }
   if (!activeServo[RFC] && !activeServo[RFF] && !activeServo[RFT] &&
       !activeServo[LRC] && !activeServo[LRF] && !activeServo[LRT] &&
@@ -4845,48 +4839,52 @@ void step_backward(int ydir, int xdir, int zdir) {
   if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
       !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
       !servoSequence[LF] && activeGaitPair == 1) {
+    // Step 0: Lift foot cleanly off carpet
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
-    update_sequencer(RR, RRF, (4*spd_factor), (gaitHome[RRF] + s1f), servoSequence[RR], 0);
-    update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] + s1t_r), servoSequence[RR], 0);
+    update_sequencer(RR, RRF, (4*spd_factor), (gaitHome[RRF] - half_stride_r), servoSequence[RR], 0);
+    update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] + lift_t), servoSequence[RR], 0);
 
     update_sequencer(LF, LFC, (lspd*spd_factor), lfturn, (servoSequence[LF] + 1), 0);
-    update_sequencer(LF, LFF, (4*spd_factor), (gaitHome[LFF] - s1f), servoSequence[LF], 0);
-    update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] - s1t_f), servoSequence[LF], 0);
+    update_sequencer(LF, LFF, (4*spd_factor), (gaitHome[LFF] - half_stride_f), servoSequence[LF], 0);
+    update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] - lift_t), servoSequence[LF], 0);
   }
   if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
       !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
       servoSequence[LF] == 1) {
+    // Step 1: Swing in air to placement point (LF to Home, RR to Home - stride_r)
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
-    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] - s2f_r), servoSequence[RR], 0);
-    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] + s2t_r), servoSequence[RR], 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] - stride_r), servoSequence[RR], 0);
+    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] + air_t), servoSequence[RR], 0);
 
     update_sequencer(LF, LFC, (lspd*spd_factor), lfturn, (servoSequence[LF] + 1), 0);
-    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] + s2f_f), servoSequence[LF], 0);
-    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] - s2t_f), servoSequence[LF], 0);
+    update_sequencer(LF, LFF, (3*spd_factor), gaitHome[LFF], servoSequence[LF], 0);
+    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] - air_t), servoSequence[LF], 0);
   }
   if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
       !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
       servoSequence[LF] == 2) {
+    // Step 2: Plant feet firmly on carpet
     update_sequencer(RR, RRC, (3*spd_factor), (gaitHome[RRC]), (servoSequence[RR] + 1), 0);
-    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] - s3f_r), servoSequence[RR], 0);
-    update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] - s3t), servoSequence[RR], 0);
+    update_sequencer(RR, RRF, (3*spd_factor), (gaitHome[RRF] - stride_r), servoSequence[RR], 0);
+    update_sequencer(RR, RRT, (3*spd_factor), (gaitHome[RRT] - plant_t), servoSequence[RR], 0);
 
     update_sequencer(LF, LFC, (lspd*spd_factor), lfturn, (servoSequence[LF] + 1), 0);
-    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] + s3f_f), servoSequence[LF], 0);
-    update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] + s3t), servoSequence[LF], 0);
+    update_sequencer(LF, LFF, (3*spd_factor), gaitHome[LFF], servoSequence[LF], 0);
+    update_sequencer(LF, LFT, (3*spd_factor), (gaitHome[LFT] + plant_t), servoSequence[LF], 0);
   }
   if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
       !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
       servoSequence[LF] == 3) {
+    // Step 3: Stance drive - feet push forward on carpet, propelling body backward!
     update_sequencer(RR, RRC, (3*spd_factor), gaitHome[RRC], 4, 0);
     update_sequencer(RR, RRF, (3*spd_factor), gaitHome[RRF], 4, 0);
-    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - s4t), 4, 0);
+    update_sequencer(RR, RRT, (6*spd_factor), (gaitHome[RRT] - stance_t), 4, 0);
 
     update_sequencer(LF, LFC, (3*spd_factor), gaitHome[LFC], 4, 0);
-    update_sequencer(LF, LFF, (3*spd_factor), gaitHome[LFF], 4, 0);
-    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] + s4t), 4, 0);
+    update_sequencer(LF, LFF, (3*spd_factor), (gaitHome[LFF] - stride_f), 4, 0);
+    update_sequencer(LF, LFT, (6*spd_factor), (gaitHome[LFT] + stance_t), 4, 0);
 
-    activeGaitPair = 0; // Pair 2 has planted on ground; hand turn to Pair 1
+    activeGaitPair = 0; // Pair 2 is planted on ground; hand turn to Pair 1
   }
   if (!activeServo[LFC] && !activeServo[LFF] && !activeServo[LFT] &&
       !activeServo[RRC] && !activeServo[RRF] && !activeServo[RRT] &&
