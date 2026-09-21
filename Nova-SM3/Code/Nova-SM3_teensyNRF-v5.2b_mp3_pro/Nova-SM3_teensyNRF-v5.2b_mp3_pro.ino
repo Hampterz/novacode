@@ -3082,136 +3082,143 @@ void set_stay() {
 }
 
 void set_sit() {
-  activeServo[LFC] = 1;
-  servoSpeed[LFC] = 10;
-  targetPos[LFC] = servoHome[LFC];
-  activeServo[LRC] = 1;
-  servoSpeed[LRC] = 10;
-  targetPos[LRC] = servoHome[LRC];
+  for (int l = 0; l < TOTAL_LEGS; l++) {
+    servoSequence[l] = 0;
+  }
+  activeGaitPair = 0;
+
+  // Servo 0: RFC: 390.00
   activeServo[RFC] = 1;
   servoSpeed[RFC] = 10;
-  targetPos[RFC] = servoHome[RFC];
-  activeServo[RRC] = 1;
-  servoSpeed[RRC] = 10;
-  targetPos[RRC] = servoHome[RRC];
+  targetPos[RFC] = 390.00;
 
-  activeServo[LFT] = 1;
-  servoSpeed[LFT] = 10;
-  targetPos[LFT] = servoLimit[LFT][0];
+  // Servo 1: RFF: 290.00
+  activeServo[RFF] = 1;
+  servoSpeed[RFF] = 10;
+  targetPos[RFF] = 290.00;
+
+  // Servo 2: RFT: 480.00
   activeServo[RFT] = 1;
   servoSpeed[RFT] = 10;
-  targetPos[RFT] = servoLimit[RFT][1]; // Fixed
+  targetPos[RFT] = 480.00;
 
-  activeServo[LRT] = 1;
-  servoSpeed[LRT] = 10;
-  targetPos[LRT] = servoLimit[LRT][0]; // Fixed
-  activeServo[RRT] = 1;
-  servoSpeed[RRT] = 10;
-  targetPos[RRT] = servoLimit[RRT][1];
+  // Servo 3: LFC: 390.00
+  activeServo[LFC] = 1;
+  servoSpeed[LFC] = 10;
+  targetPos[LFC] = 390.00;
 
-  activeServo[LRF] = 1;
-  servoSpeed[LRF] = 10;
-  targetPos[LRF] = (servoLimit[LRF][0] - 30);
+  // Servo 4: LFF: 510.00
+  activeServo[LFF] = 1;
+  servoSpeed[LFF] = 10;
+  targetPos[LFF] = 510.00;
+
+  // Servo 5: LFT: 340.00
+  activeServo[LFT] = 1;
+  servoSpeed[LFT] = 10;
+  targetPos[LFT] = 340.00;
+
+  // Servo 6: RRC: 420.00
+  activeServo[RRC] = 1;
+  servoSpeed[RRC] = 10;
+  targetPos[RRC] = 420.00;
+
+  // Servo 7: RRF: 210.00
   activeServo[RRF] = 1;
   servoSpeed[RRF] = 10;
-  targetPos[RRF] = (servoLimit[RRF][0] + 30);
+  targetPos[RRF] = 210.00;
 
-  activeServo[LFF] = 1;
-  servoSpeed[LFF] = 20;
-  targetPos[LFF] = (servoLimit[LFF][1] + 90);
-  activeServo[RFF] = 1;
-  servoSpeed[RFF] = 20;
-  targetPos[RFF] = (servoLimit[RFF][1] - 90);
+  // Servo 8: RRT: 630.00
+  activeServo[RRT] = 1;
+  servoSpeed[RRT] = 10;
+  targetPos[RRT] = 630.00;
+
+  // Servo 9: LRC: 400.00
+  activeServo[LRC] = 1;
+  servoSpeed[LRC] = 10;
+  targetPos[LRC] = 400.00;
+
+  // Servo 10: LRF: 540.00
+  activeServo[LRF] = 1;
+  servoSpeed[LRF] = 10;
+  targetPos[LRF] = 540.00;
+
+  // Servo 11: LRT: 160.00
+  activeServo[LRT] = 1;
+  servoSpeed[LRT] = 10;
+  targetPos[LRT] = 160.00;
 
   lastMoveDelayUpdate = millis();
 }
 
 void set_crouch() {
-  activeServo[LFC] = 1;
-  servoSpeed[LFC] = 10;
-  targetPos[LFC] = servoHome[LFC];
-  activeServo[LRC] = 1;
-  servoSpeed[LRC] = 10;
-  targetPos[LRC] = servoHome[LRC];
-  activeServo[RFC] = 1;
-  servoSpeed[RFC] = 10;
-  targetPos[RFC] = servoHome[RFC];
-  activeServo[RRC] = 1;
-  servoSpeed[RRC] = 10;
-  targetPos[RRC] = servoHome[RRC];
-
-  activeServo[LFT] = 1;
-  servoSpeed[LFT] = 10;
-  targetPos[LFT] = servoLimit[LFT][1];
-  activeServo[RFT] = 1;
-  servoSpeed[RFT] = 10;
-  targetPos[RFT] = servoLimit[RFT][0]; // Fixed
-
-  activeServo[LRT] = 1;
-  servoSpeed[LRT] = 10;
-  targetPos[LRT] = servoLimit[LRT][1];
-  activeServo[RRT] = 1;
-  servoSpeed[RRT] = 10;
-  targetPos[RRT] = servoLimit[RRT][0]; // Fixed
-
-  activeServo[LRF] = 1;
-  servoSpeed[LRF] = 10;
-  targetPos[LRF] = (servoLimit[LRF][0] - 30);
-  activeServo[RRF] = 1;
-  servoSpeed[RRF] = 10;
-  targetPos[RRF] = (servoLimit[RRF][0] + 30);
-
-  activeServo[LFF] = 1;
-  servoSpeed[LFF] = 20;
-  targetPos[LFF] = (servoLimit[LFF][0] - 30);
-  activeServo[RFF] = 1;
-  servoSpeed[RFF] = 20;
-  targetPos[RFF] = (servoLimit[RFF][0] + 30);
-
-  lastMoveDelayUpdate = millis();
+  set_lay();
 }
 
 void set_lay() {
-  activeServo[LFC] = 1;
-  servoSpeed[LFC] = 20;
-  targetPos[LFC] = (servoLimit[LFC][1]);
-  activeServo[LRC] = 1;
-  servoSpeed[LRC] = 20;
-  targetPos[LRC] = (servoLimit[LRC][1]);
-  activeServo[RFC] = 1;
-  servoSpeed[RFC] = 20;
-  targetPos[RFC] = (servoLimit[RFC][1]);
-  activeServo[RRC] = 1;
-  servoSpeed[RRC] = 20;
-  targetPos[RRC] = (servoLimit[RRC][1]);
+  for (int l = 0; l < TOTAL_LEGS; l++) {
+    servoSequence[l] = 0;
+  }
+  activeGaitPair = 0;
 
-  activeServo[LFT] = 1;
-  servoSpeed[LFT] = 10;
-  targetPos[LFT] = servoLimit[LFT][1];
+  // Servo 0: RFC: 390.00
+  activeServo[RFC] = 1;
+  servoSpeed[RFC] = 10;
+  targetPos[RFC] = 390.00;
+
+  // Servo 1: RFF: 290.00
+  activeServo[RFF] = 1;
+  servoSpeed[RFF] = 10;
+  targetPos[RFF] = 290.00;
+
+  // Servo 2: RFT: 680.00
   activeServo[RFT] = 1;
   servoSpeed[RFT] = 10;
-  targetPos[RFT] = servoLimit[RFT][1];
+  targetPos[RFT] = 680.00;
 
-  activeServo[LRT] = 1;
-  servoSpeed[LRT] = 10;
-  targetPos[LRT] = servoLimit[LRT][1];
-  activeServo[RRT] = 1;
-  servoSpeed[RRT] = 10;
-  targetPos[RRT] = servoLimit[RRT][1];
+  // Servo 3: LFC: 390.00
+  activeServo[LFC] = 1;
+  servoSpeed[LFC] = 10;
+  targetPos[LFC] = 390.00;
 
-  activeServo[LRF] = 1;
-  servoSpeed[LRF] = 10;
-  targetPos[LRF] = (servoLimit[LRF][0]);
+  // Servo 4: LFF: 510.00
+  activeServo[LFF] = 1;
+  servoSpeed[LFF] = 10;
+  targetPos[LFF] = 510.00;
+
+  // Servo 5: LFT: 130.00
+  activeServo[LFT] = 1;
+  servoSpeed[LFT] = 10;
+  targetPos[LFT] = 130.00;
+
+  // Servo 6: RRC: 420.00
+  activeServo[RRC] = 1;
+  servoSpeed[RRC] = 10;
+  targetPos[RRC] = 420.00;
+
+  // Servo 7: RRF: 210.00
   activeServo[RRF] = 1;
   servoSpeed[RRF] = 10;
-  targetPos[RRF] = (servoLimit[RRF][0]);
+  targetPos[RRF] = 210.00;
 
-  activeServo[LFF] = 1;
-  servoSpeed[LFF] = 20;
-  targetPos[LFF] = (servoLimit[LFF][0]);
-  activeServo[RFF] = 1;
-  servoSpeed[RFF] = 20;
-  targetPos[RFF] = (servoLimit[RFF][0]);
+  // Servo 8: RRT: 690.00
+  activeServo[RRT] = 1;
+  servoSpeed[RRT] = 10;
+  targetPos[RRT] = 690.00;
+
+  // Servo 9: LRC: 400.00
+  activeServo[LRC] = 1;
+  servoSpeed[LRC] = 10;
+  targetPos[LRC] = 400.00;
+
+  // Servo 10: LRF: 540.00
+  activeServo[LRF] = 1;
+  servoSpeed[LRF] = 10;
+  targetPos[LRF] = 540.00;
+
+  // Servo 11: LRT: 130.00
+  activeServo[LRT] = 1;
+  servoSpeed[LRT] = 10;
+  targetPos[LRT] = 130.00;
 
   lastMoveDelayUpdate = millis();
 }
