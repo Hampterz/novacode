@@ -1,8 +1,11 @@
-﻿# I Built a Robot Dog from Scratch — Here's Everything That Went Wrong
+# I Built a Robot Dog from Scratch — Here's Everything That Went Wrong
 
 **By Sreyas**  
 **Project:** NovaSM3 Quadruped Robot Dog  
 **Based on:** SpotMicro/NovaSM3 by Chris Locke
+
+![Nova SM3 Quadruped Robot Dog](images/IMG_8158.jpg)
+*Nova SM3 standing proud — fully assembled with electronics bay, high-current buck converter, speaker head, and 12 high-torque servos powered up.*
 
 ---
 
@@ -42,9 +45,25 @@ Before I even touched a wire, I had to source everything. The full parts list:
 
 The 3D printing alone took days. Watching parts come off the bed one by one, checking tolerances, reprinting when something didn't fit right — it's a whole project within the project.
 
+![Nova 3D printed chassis and leg skeleton](images/IMG_8128.jpg)
+*The mechanical chassis and leg assemblies coming together during initial mock-up and dry fitting.*
+
+For voice lines and sound effects, the DFPlayer Pro USB-C board and an internal micro speaker were integrated directly into the front head assembly:
+
+![DFPlayer Pro and mini speaker mounted inside Nova's yellow head](images/IMG_8141.jpg)
+*Front view of the 3D-printed head housing the DFPlayer Pro USB-C board and front speaker.*
+
+![Rear view of head speaker wiring](images/IMG_8142.jpg)
+*Rear perspective showing internal speaker lead routing and mounting screws.*
+
 ---
 
 ## Wiring: Where Everything Started Going Wrong
+
+To keep all the connections clean and avoid a rat's nest of loose DuPont jumpers between the Teensy 4.0, Arduino Nano, MPU-6050, and peripheral buses, I built on a dedicated custom PCB shield.
+
+![Evolution of custom Nova SM3 PCB shield](images/IMG_8125.jpg)
+*The evolution of my custom Nova SM3 PCB: from bare green PCB shield, to soldered Teensy 4.0 and IMU, to the complete stacked board assembly.*
 
 ### The Wire Gauge Problem
 
@@ -72,6 +91,9 @@ LiPo (11.1V 3S)
 
 Setting the buck converter voltages required a multimeter set to **20V DC** — the range just above what I was measuring. Red probe to output positive, black to negative, adjust the tiny potentiometer screw until the display reads what you want. The 6.8V buck landed at 6.81V and I left it there. The 5.4V buck read 5.42V. Both perfectly fine.
 
+![Bench testing the 3S LiPo battery with high-power buck converter](images/IMG_8143.jpg)
+*Bench-testing the 11.1V 3S LiPo battery through the heavy-duty aluminum heatsink buck converter connected to the shield.*
+
 ### The PCA9685 Has TWO Power Inputs (I Didn't Know This)
 
 This tripped me up badly. The PCA9685 servo driver board has two completely separate power connections:
@@ -82,6 +104,9 @@ This tripped me up badly. The PCA9685 servo driver board has two completely sepa
 I wired logic power through the rocker switch to VCC and called it done. The green terminal had GND connected but no V+. When I powered everything on, servos got zero power. I spent way too long debugging before I realized the servo power rail was completely disconnected.
 
 Both inputs must be connected. VCC feeds the chip. The green terminal feeds the servos. Two different voltages, two different purposes.
+
+![Top chassis wiring harness and power switch routing](images/IMG_8156.jpg)
+*Overhead look at chassis wiring harness, power toggle switch, XT60 battery leads, and servo ribbon cable routing.*
 
 ---
 
@@ -137,9 +162,32 @@ The software fix for this is adjusting the home position values in `NovaServos.h
 
 ## Gluing the Servo Horns: A Terrible Idea
 
-I'll be honest about this one. I glued the servo horns on because I was worried about them coming loose. This was a mistake.
+I'll be honest about this one. I glued the servo horns on because I was worried about them coming loose. This was a massive mistake.
+
+![The scene of the crime: leg parts, drill, and superglue](images/IMG_8126.jpg)
+*The scene of the crime: four leg assemblies, drill, and the bottle of super glue that nearly ruined the build.*
+
+The DS3218MG 20kg servos come with 25T red anodized aluminum horns.
+
+![DS3218MG metal gear servo with red aluminum horn](images/IMG_8074.JPG)
+*DS3218MG 20kg metal gear servo with 25T spline and red aluminum horn before installation.*
+
+I fitted the horns into the 3D-printed bearing brackets and tested joint motion:
+
+![Testing horn fitment and rotation inside bearing bracket](images/IMG_8082.gif)
+*Checking fitment and rotation clearance of the red metal horn inside the 3D-printed bearing bracket.*
+
+Worried that the horns might slip or loosen during walking gaits, I applied superglue directly into the joint recess and mounted the servos.
+
+![Servo mounted in yellow leg housing with glued horn](images/IMG_8079.JPG)
+*Servo installed into the yellow PETG leg housing with the horn glued into place.*
 
 Servo horns are supposed to come off. You need to be able to remove them to reposition them if a servo is installed at the wrong angle. The correct attachment method is the included screw — tight enough to hold but removable when needed.
+
+When I realized some servos were installed off-angle, I tried to free them — and ended up stripping the screw holes through the rock-hard glue:
+
+![Close-up of stripped screw hole and glue residue](images/IMG_8081.JPG)
+*Close-up of the stripped screw hole and glue residue inside the joint recess.*
 
 With glued horns I had no way to manually reposition servos. The only option was adjusting home values in software to compensate, which works but is harder and less precise than just pulling the horn off and reattaching it at the correct angle.
 
@@ -160,6 +208,9 @@ The reason: every single debug flag in the NovaSM3 Teensy code defaults to 0. An
 Fix: set `const byte debug = 1;` at the top of the code. Immediately Serial Monitor came alive with startup messages.
 
 Third problem: even with debug enabled, I was missing the startup messages because they printed before I could open Serial Monitor. The `while (!Serial)` wait is commented out in the code because of Teensy quirks with USB initialization. Fix: add `delay(3000);` before the first serial print to give myself time to open the monitor.
+
+![Teensy 4.0 soldered into custom PCB shield](images/IMG_8069.jpg)
+*Teensy 4.0 soldered into the custom shield with high-current screw terminals and peripheral headers.*
 
 ---
 
@@ -195,6 +246,12 @@ Failed uploading: uploading error: exit status 1
 ```
 
 The fix was simple once I knew it: go to **Tools → Processor → ATmega328P (Old Bootloader)**. The cheap CH340-based Arduino Nanos that are widely available use an older bootloader, and Arduino IDE defaults to the newer one. Switching to Old Bootloader fixed the upload immediately.
+
+![Arduino Nano mounted on custom PCB shield over MPU-6050](images/IMG_8096.JPG)
+*Top-down view of the CH340 Arduino Nano seated directly above the MPU-6050 6-DOF IMU sensor.*
+
+![Isometric view of Arduino Nano and MPU6050 headers](images/IMG_8097.JPG)
+*Isometric view showing header pin spacing, capacitor filtering, and connector layout on the shield.*
 
 ---
 
@@ -234,6 +291,9 @@ pwm1.setPWMFreq(60);                    // 60 Hz — do not change
 Adafruit suggests 50 Hz for analog servos but the DS3218 is a digital servo and 60 Hz works correctly. Changing either of these values completely invalidates all calibration and can cause servos to behave erratically or get damaged.
 
 I ran the calibration sketch one leg at a time to start, to avoid any leg-to-leg collisions during sweeping. Connecting three servos, powering up, watching where they homed, then adjusting the values in `NovaServos.h` and repeating.
+
+![Close-up of leg joint servo during calibration](images/IMG_8157.jpg)
+*Close-up of the front leg joint mechanism with the 20kg DSSERVO during angle zeroing and offset calibration.*
 
 My measured home values ended up different from the defaults because my servos were installed at slightly different angles:
 
@@ -301,6 +361,9 @@ At the time of writing this, here's where the build stands:
 - ⬜ Wireless control from laptop end-to-end
 
 There's still work to do. But the robot is taking shape, the servos are moving, and every problem I've fixed has taught me something I couldn't have learned any other way. That's what this kind of project is really about.
+
+![Nova standing balanced and proud](images/IMG_8159.jpg)
+*Nova standing squarely on all four paws with calibrated neutral stance and stable center of gravity.*
 
 ---
 
